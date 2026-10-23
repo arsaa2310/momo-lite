@@ -1,0 +1,45 @@
+# momo lite PO — terpisah dari momo utama (database, port & container sendiri)
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: lite-po-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lite
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-lite}
+      POSTGRES_DB: lite_po
+    ports:
+      - "${DB_PORT:-5434}:5432"
+    volumes:
+      - lite-po-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lite -d lite_po"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./server
+    container_name: lite-po-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://lite:${DB_PASSWORD:-lite}@db:5432/lite_po
+      JWT_SECRET: ${JWT_SECRET:-ganti-dengan-rahasia-panjang}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@lite.id}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin12345}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./web
+    container_name: lite-po-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8095}:80"
+    depends_on:
+      - api
+
+volumes:
+  lite-po-db:
