@@ -67,6 +67,19 @@ Format kolom sama dengan momo: Tanggal, Term (PTH/PKH), Kode, Supplier, Barang, 
 Harga, PPN, Sub Total, Diskon, TOTAL (per hari + term), Tanggal Bayar, Rekening, CR/DB, No. Dokumen.
 Ekspor Excel berisi sheet *Jurnal Umum* (dengan total PTH/PKH/belum dibayar) dan *Rekap Kategori*.
 
+## Perbaikan harga tanpa ribuan
+
+Harga yang tertulis tanpa ribuan (mis. `17` maksudnya `17.000`) bisa dikali 1.000 sekaligus:
+
+```bash
+docker compose exec api npm run fix:prices              # pratinjau, tidak mengubah apa pun
+docker compose exec api npm run fix:prices -- --apply   # simpan
+```
+
+Yang diubah: harga supplier, harga default bahan belanja, dan harga baris PO yang belum ada barang datang. Bahan bersatuan
+kecil (gram, ml) dilewati; PO yang barangnya sudah datang hanya ditampilkan untuk dicek manual. Di form, harga di bawah
+Rp1.000 menampilkan saran "maksudnya Rp17.000?".
+
 ## Pengembangan lokal
 
 ```bash

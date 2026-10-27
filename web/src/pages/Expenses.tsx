@@ -27,9 +27,11 @@ export default function Expenses({ kind }: { kind: Kind }) {
       <StageFilter value={f.status} onChange={(v) => set('status', v)} options={[{ value: '', label: 'Tercatat' }, { value: 'void', label: 'Dibatalkan', tone: 'red' }, { value: 'all', label: 'Semua' }]} />
       <div className="toolbar">
         <SearchBox value={f.q} onChange={(v) => set('q', v)} placeholder="Cari nomor / toko / bahan…" />
-        <Input type="date" value={f.from} onChange={(e) => set('from', e.target.value)} style={{ width: 150 }} />
-        <span className="muted">s/d</span>
-        <Input type="date" value={f.to} onChange={(e) => set('to', e.target.value)} style={{ width: 150 }} />
+        <div className="date-range">
+          <Input type="date" value={f.from} onChange={(e) => set('from', e.target.value)} />
+          <span className="muted">s/d</span>
+          <Input type="date" value={f.to} onChange={(e) => set('to', e.target.value)} />
+        </div>
         <span className="spacer" />
         {data && <span className="muted">Total: <b className="tnum" style={{ color: 'var(--ink)' }}>{rp(data.sum)}</b></span>}
       </div>
@@ -38,18 +40,18 @@ export default function Expenses({ kind }: { kind: Kind }) {
       ) : (
         <div className="panel">
           <div className="table-wrap">
-            <table className="t">
+            <table className="t mcards">
               <thead><tr><th>Nomor</th><th>Tanggal</th><th>Toko</th><th>Bahan</th><th>Dibayar dari</th><th>Dicatat</th><th className="num">Total</th></tr></thead>
               <tbody>
                 {data.data.map((x: any) => (
                   <tr key={x.id} className="click" onClick={() => setOpen(x.id)}>
                     <td className="mono">{x.number}{x.voided_at && <> <Badge tone="red">Batal</Badge></>}</td>
-                    <td>{date(x.expense_date)}</td>
-                    <td>{x.supplier_name ?? <span className="muted">—</span>}</td>
-                    <td style={{ whiteSpace: 'normal', maxWidth: 320 }}>{x.item_names}</td>
-                    <td>{x.pay_account_name}</td>
-                    <td>{x.created_by_name}<span className="sub">{dateTime(x.created_at)}</span></td>
-                    <td className="num">{x.voided_at ? <s className="muted">{rp(x.total)}</s> : rp(x.total)}</td>
+                    <td data-label="Tanggal">{date(x.expense_date)}</td>
+                    <td data-label="Toko">{x.supplier_name ?? <span className="muted">—</span>}</td>
+                    <td data-label="Bahan" className="full" style={{ whiteSpace: 'normal', maxWidth: 320 }}>{x.item_names}</td>
+                    <td data-label="Dibayar dari">{x.pay_account_name}</td>
+                    <td data-label="Dicatat">{x.created_by_name}<span className="sub">{dateTime(x.created_at)}</span></td>
+                    <td className="num full" data-label="Total">{x.voided_at ? <s className="muted">{rp(x.total)}</s> : rp(x.total)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -119,6 +121,7 @@ function CreateExpense({ kind, onClose }: { kind: Kind; onClose: () => void }) {
               })}
             </tbody>
           </table>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: -6 }}>Jumlah boleh desimal, pakai koma — mis. 0,5 atau 1,25.</div>
           <div><button className="btn sm" onClick={() => setLines((ls) => [...ls, newLine()])}><Plus size={14} /> Tambah bahan</button></div>
           <div className="photo-grid">
             <PhotoInput label="Foto nota / struk (wajib)" kind="expense" value={nota} onChange={setNota} />
@@ -151,9 +154,9 @@ function ExpenseDetail({ id, onClose }: { id: number; onClose: () => void }) {
         </dl>
         <div className="panel">
           <div className="table-wrap">
-            <table className="t compact">
+            <table className="t compact mcards">
               <thead><tr><th>Bahan</th><th className="num">Jumlah</th><th className="num">Harga / satuan</th><th className="num">Total</th></tr></thead>
-              <tbody>{x.lines.map((l: any) => <tr key={l.id}><td><b>{l.name}</b><span className="sub">{l.category} · {l.sub_category}</span></td><td className="num">{fq(l.qty)} {l.unit}</td><td className="num">{rp(Number(l.amount) / Number(l.qty))}</td><td className="num">{rp(l.amount)}</td></tr>)}</tbody>
+              <tbody>{x.lines.map((l: any) => <tr key={l.id}><td><b>{l.name}</b><span className="sub">{l.category} · {l.sub_category}</span></td><td className="num" data-label="Jumlah">{fq(l.qty)} {l.unit}</td><td className="num" data-label="Harga / satuan">{rp(Number(l.amount) / Number(l.qty))}</td><td className="num full" data-label="Total">{rp(l.amount)}</td></tr>)}</tbody>
               <tfoot><tr><td colSpan={3}>Total</td><td className="num">{rp(x.total)}</td></tr></tfoot>
             </table>
           </div>

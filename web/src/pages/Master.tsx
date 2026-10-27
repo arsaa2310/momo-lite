@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { Download, FileSpreadsheet, Plus, Trash2, Upload } from 'lucide-react';
+import { Download, FileSpreadsheet, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { api, download } from '../api';
 import { useApi, useAction } from '../ui/hooks';
 import { useToast } from '../ui/toast';
-import { Badge, Confirm, Empty, Field, Input, Loading, Money, PageHead, SearchBox, Seg, Select, Sheet, Tabs } from '../ui/kit';
+import { Badge, Confirm, Empty, Field, Input, Loading, Money, PageHead, SearchBox, Seg, Select, Sheet, Tabs, ThousandHint } from '../ui/kit';
 import { date, qty as fq, rp } from '../format';
 
 type Tab = 'items' | 'suppliers' | 'prices' | 'expense' | 'accounts';
@@ -71,11 +71,13 @@ function useFilter<T>(rows: T[] | undefined, text: (r: T) => string) {
   return { q, setQ, list };
 }
 
-function DeleteButton({ url, label }: { url: string; label: string }) {
+// Tombol ubah & hapus di ujung baris (di HP tampil di pojok kanan atas kartu)
+function RowActions({ url, label, onEdit }: { url: string; label: string; onEdit: () => void }) {
   const [open, setOpen] = useState(false);
   const del = useAction(() => api.del(url), { success: 'Dihapus', invalidate: INVALIDATE, onDone: () => setOpen(false) });
   return (
-    <span onClick={(e) => e.stopPropagation()}>
+    <span className="row-actions" onClick={(e) => e.stopPropagation()}>
+      <button className="btn ghost icon sm" aria-label="Ubah" title="Ubah" onClick={onEdit}><Pencil size={14} /></button>
       <button className="btn ghost icon sm" aria-label="Hapus" title="Hapus" onClick={() => setOpen(true)}><Trash2 size={14} /></button>
       {open && <Confirm title="Hapus data?" text={<>Hapus <b>{label}</b>? Dokumen lama (PO, belanja) tetap menyimpan datanya.</>} busy={del.isPending} onConfirm={() => del.mutate(undefined)} onClose={() => setOpen(false)} />}
     </span>
@@ -88,7 +90,7 @@ function Table({ head, children, empty, count, search }: { head: ReactNode; chil
       <div className="toolbar">{search}<span className="muted" style={{ fontSize: 13 }}>{count} data · klik baris untuk mengubah</span></div>
       <div className="panel">
         {empty ? <Empty title="Belum ada data">Klik tombol <b>Tambah</b> di kanan atas, atau isi lewat template Excel.</Empty> : (
-          <div className="table-wrap"><table className="t compact"><thead>{head}</thead><tbody>{children}</tbody></table></div>
+          <div className="table-wrap"><table className="t compact mcards"><thead>{head}</thead><tbody>{children}</tbody></table></div>
         )}
       </div>
     </>
@@ -106,10 +108,10 @@ function ItemsTab({ onEdit }: TabProps) {
       head={<tr><th>Nama bahan</th><th>Satuan</th><th>Kategori</th><th>Sub kategori</th><th className="num">Supplier</th><th className="num">Harga termurah</th><th /></tr>}>
       {f.list.map((r) => (
         <tr key={r.id} className="click" onClick={() => onEdit(r)}>
-          <td><b>{r.name}</b></td><td>{r.unit}</td><td>{r.category ?? <span className="muted">—</span>}</td><td>{r.sub_category ?? <span className="muted">—</span>}</td>
-          <td className="num">{r.supplier_count || <Badge tone="amber">belum ada</Badge>}</td>
-          <td className="num">{r.min_price != null ? rp(r.min_price) : '—'}</td>
-          <td className="right"><DeleteButton url={`/master/items/${r.id}`} label={r.name} /></td>
+          <td><b>{r.name}</b></td><td data-label="Satuan">{r.unit}</td><td data-label="Kategori">{r.category ?? <span className="muted">—</span>}</td><td data-label="Sub kategori">{r.sub_category ?? <span className="muted">—</span>}</td>
+          <td className="num" data-label="Supplier">{r.supplier_count || <Badge tone="amber">belum ada</Badge>}</td>
+          <td className="num" data-label="Harga termurah">{r.min_price != null ? rp(r.min_price) : '—'}</td>
+          <td className="right x"><RowActions url={`/master/items/${r.id}`} label={r.name} onEdit={() => onEdit(r)} /></td>
         </tr>
       ))}
     </Table>
@@ -125,11 +127,11 @@ function SuppliersTab({ onEdit }: TabProps) {
       head={<tr><th>Supplier</th><th>Kontak</th><th>Alamat</th><th>Termin default</th><th className="num">Bahan</th><th /></tr>}>
       {f.list.map((r) => (
         <tr key={r.id} className="click" onClick={() => onEdit(r)}>
-          <td><b>{r.name}</b></td><td>{r.contact_name ?? '—'}{r.phone && <span className="sub">{r.phone}</span>}</td>
-          <td style={{ whiteSpace: 'normal' }}>{r.address ?? '—'}</td>
-          <td>{r.default_terms ? <span className={`kt ${r.default_terms === 'credit' ? 'K' : 'T'}`}>{r.default_terms === 'credit' ? 'K' : 'T'}</span> : <span className="muted">—</span>}</td>
-          <td className="num">{r.item_count || <Badge tone="amber">0</Badge>}</td>
-          <td className="right"><DeleteButton url={`/master/suppliers/${r.id}`} label={r.name} /></td>
+          <td><b>{r.name}</b></td><td data-label="Kontak">{r.contact_name ?? '—'}{r.phone && <span className="sub">{r.phone}</span>}</td>
+          <td data-label="Alamat" style={{ whiteSpace: 'normal' }}>{r.address ?? '—'}</td>
+          <td data-label="Termin default">{r.default_terms ? <span className={`kt ${r.default_terms === 'credit' ? 'K' : 'T'}`}>{r.default_terms === 'credit' ? 'K' : 'T'}</span> : <span className="muted">—</span>}</td>
+          <td className="num" data-label="Bahan">{r.item_count || <Badge tone="amber">0</Badge>}</td>
+          <td className="right x"><RowActions url={`/master/suppliers/${r.id}`} label={r.name} onEdit={() => onEdit(r)} /></td>
         </tr>
       ))}
     </Table>
@@ -142,13 +144,13 @@ function PricesTab({ onEdit }: TabProps) {
   if (isLoading) return <Loading />;
   return (
     <Table count={f.list.length} empty={!f.list.length} search={<SearchBox value={f.q} onChange={f.setQ} placeholder="Cari supplier / bahan…" />}
-      head={<tr><th>Supplier</th><th>Bahan</th><th className="num">Harga</th><th>Diperbarui</th><th /></tr>}>
+      head={<tr><th>Bahan · supplier</th><th className="num">Harga</th><th>Diperbarui</th><th /></tr>}>
       {f.list.map((r) => (
         <tr key={`${r.supplier_id}-${r.item_id}`} className="click" onClick={() => onEdit(r)}>
-          <td>{r.supplier_name}</td><td><b>{r.item_name}</b> <span className="muted">/ {r.unit}</span></td>
-          <td className="num">{r.price != null ? rp(r.price) : <span className="muted">—</span>}</td>
-          <td className="muted">{date(r.updated_at)}</td>
-          <td className="right"><DeleteButton url={`/master/prices/${r.supplier_id}/${r.item_id}`} label={`${r.item_name} dari ${r.supplier_name}`} /></td>
+          <td><b>{r.item_name}</b> <span className="muted">/ {r.unit}</span><span className="sub">{r.supplier_name}</span></td>
+          <td className="num" data-label="Harga">{r.price != null ? <>{rp(r.price)}{Number(r.price) > 0 && Number(r.price) < 1000 && <> <Badge tone="amber">cek</Badge></>}</> : <span className="muted">—</span>}</td>
+          <td className="muted" data-label="Diperbarui">{date(r.updated_at)}</td>
+          <td className="right x"><RowActions url={`/master/prices/${r.supplier_id}/${r.item_id}`} label={`${r.item_name} dari ${r.supplier_name}`} onEdit={() => onEdit(r)} /></td>
         </tr>
       ))}
     </Table>
@@ -161,13 +163,13 @@ function ExpenseTab({ onEdit }: TabProps) {
   if (isLoading) return <Loading />;
   return (
     <Table count={f.list.length} empty={!f.list.length} search={<SearchBox value={f.q} onChange={f.setQ} placeholder="Cari bahan belanja…" />}
-      head={<tr><th>Jenis</th><th>Nama bahan</th><th>Satuan</th><th className="num">Harga default</th><th>Kategori</th><th>Sub kategori</th><th /></tr>}>
+      head={<tr><th>Nama bahan</th><th>Satuan</th><th className="num">Harga default</th><th>Kategori</th><th>Sub kategori</th><th /></tr>}>
       {f.list.map((r) => (
         <tr key={r.id} className="click" onClick={() => onEdit(r)}>
-          <td>{r.kind === 'daily' ? <Badge tone="green">Harian</Badge> : <Badge tone="blue">Karyawan</Badge>}</td>
-          <td><b>{r.name}</b></td><td>{r.unit ?? '—'}</td><td className="num">{r.default_price != null ? rp(r.default_price) : '—'}</td>
-          <td>{r.category}</td><td>{r.sub_category}</td>
-          <td className="right"><DeleteButton url={`/master/expense-items/${r.id}`} label={r.name} /></td>
+          <td><b>{r.name}</b> {r.kind === 'daily' ? <Badge tone="green">Harian</Badge> : <Badge tone="blue">Karyawan</Badge>}</td>
+          <td data-label="Satuan">{r.unit ?? '—'}</td><td className="num" data-label="Harga default">{r.default_price != null ? rp(r.default_price) : '—'}</td>
+          <td data-label="Kategori">{r.category}</td><td data-label="Sub kategori">{r.sub_category}</td>
+          <td className="right x"><RowActions url={`/master/expense-items/${r.id}`} label={r.name} onEdit={() => onEdit(r)} /></td>
         </tr>
       ))}
     </Table>
@@ -182,7 +184,7 @@ function AccountsTab({ onEdit }: TabProps) {
     <Table count={f.list.length} empty={!f.list.length} search={<SearchBox value={f.q} onChange={f.setQ} placeholder="Cari rekening…" />}
       head={<tr><th>Kas / rekening</th><th /></tr>}>
       {f.list.map((r) => (
-        <tr key={r.id} className="click" onClick={() => onEdit(r)}><td><b>{r.name}</b></td><td className="right"><DeleteButton url={`/master/accounts/${r.id}`} label={r.name} /></td></tr>
+        <tr key={r.id} className="click" onClick={() => onEdit(r)}><td><b>{r.name}</b></td><td className="right x"><RowActions url={`/master/accounts/${r.id}`} label={r.name} onEdit={() => onEdit(r)} /></td></tr>
       ))}
     </Table>
   );
@@ -226,7 +228,8 @@ function PriceRows({ rows, setRows, options, label, unit }: { rows: PriceRow[]; 
               <tr key={r.key}>
                 <td data-label={label}><Select value={r.other_id} onChange={(e) => upd(r.key, { other_id: e.target.value })} placeholder={`— Pilih ${label.toLowerCase()} —`}
                   options={options.filter((o) => String(o.value) === r.other_id || !used.has(String(o.value)))} /></td>
-                <td data-label="Harga"><Money value={r.price} onChange={(v) => upd(r.key, { price: v })} placeholder={unit && r.other_id ? `per ${unit(r.other_id)}` : 'boleh kosong'} /></td>
+                <td data-label="Harga" className="full"><Money value={r.price} onChange={(v) => upd(r.key, { price: v })} placeholder={unit && r.other_id ? `per ${unit(r.other_id)}` : 'boleh kosong'} />
+                  <ThousandHint value={r.price} onFix={(v) => upd(r.key, { price: v })} /></td>
                 <td className="x"><button type="button" className="btn ghost icon" aria-label="Hapus" onClick={() => setRows(rows.filter((x) => x.key !== r.key))}><Trash2 size={15} /></button></td>
               </tr>
             ))}
@@ -312,7 +315,8 @@ function PriceForm({ row, onClose }: { row: any; onClose: () => void }) {
     <FormSheet title={row ? 'Ubah harga supplier' : 'Tambah harga supplier'} sub="Menautkan satu bahan ke satu supplier beserta harganya" onClose={onClose} onSave={() => save.mutate(undefined)} saving={save.isPending}>
       <Field label="Supplier *"><Select value={f.supplier_id} disabled={!!row} onChange={(e) => setF({ ...f, supplier_id: e.target.value })} placeholder="— Pilih supplier —" options={(sups.data ?? []).map((s) => ({ value: s.id, label: s.name }))} /></Field>
       <Field label="Bahan *"><Select value={f.item_id} disabled={!!row} onChange={(e) => setF({ ...f, item_id: e.target.value })} placeholder="— Pilih bahan —" options={(items.data ?? []).map((i) => ({ value: i.id, label: `${i.name} (${i.unit})` }))} /></Field>
-      <Field label={`Harga${unit ? ` per ${unit}` : ''}`} hint="Boleh kosong; harga PO terakhir otomatis menggantikannya"><Money value={f.price} onChange={(v) => setF({ ...f, price: v })} /></Field>
+      <Field label={`Harga${unit ? ` per ${unit}` : ''}`} hint="Boleh kosong; harga PO terakhir otomatis menggantikannya"><Money value={f.price} onChange={(v) => setF({ ...f, price: v })} />
+        <ThousandHint value={f.price} onFix={(v) => setF({ ...f, price: v })} /></Field>
     </FormSheet>
   );
 }
@@ -331,7 +335,8 @@ function ExpenseForm({ row, onClose }: { row: any; onClose: () => void }) {
       <div className="grid2">
         <Field label="Nama bahan *"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="mis. Cabai Rawit" autoFocus /></Field>
         <Field label="Satuan"><Suggest id="dl-eunit" value={f.unit} onChange={(v) => setF({ ...f, unit: v })} options={[...UNITS, ...others.map((i) => i.unit)]} placeholder="kg, ikat, paket…" /></Field>
-        <Field label="Harga default" hint="Dipakai mengisi otomatis total harga saat belanja"><Money value={f.default_price} onChange={(v) => setF({ ...f, default_price: v })} /></Field>
+        <Field label="Harga default" hint="Dipakai mengisi otomatis total harga saat belanja"><Money value={f.default_price} onChange={(v) => setF({ ...f, default_price: v })} />
+          <ThousandHint value={f.default_price} onFix={(v) => setF({ ...f, default_price: v })} /></Field>
         <span />
         <Field label="Kategori" hint={`Kosong = ${def.category}`}><Suggest id="dl-ecat" value={f.category} onChange={(v) => setF({ ...f, category: v })} options={others.map((i) => i.category)} placeholder={def.category} /></Field>
         <Field label="Sub kategori" hint={`Kosong = ${def.sub_category}`}><Suggest id="dl-esub" value={f.sub_category} onChange={(v) => setF({ ...f, sub_category: v })} options={others.map((i) => i.sub_category)} placeholder={def.sub_category} /></Field>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode, type InputHTMLAttributes, type SelectHTMLAttributes } from 'react';
 import { Combobox } from './Combobox';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { rp } from '../format';
 
 export function PageHead({ title, sub, crumb, children }: { title: string; sub?: ReactNode; crumb?: string; children?: ReactNode }) {
   return (
@@ -86,13 +87,33 @@ export function Money({ value, onChange, ...p }: { value: any; onChange: (v: str
   );
 }
 
+// Jumlah barang: boleh desimal (0,5 / 1,25 kg). Koma maupun titik diterima sebagai desimal; nilai yang dikirim pakai titik.
+export function parseQty(text: string) {
+  const t = text.replace(/,/g, '.').replace(/[^\d.]/g, '');
+  const [int, ...rest] = t.split('.');
+  if (!rest.length) return (int ?? '').replace(/^0+(?=\d)/, '');
+  return `${(int ?? '').replace(/^0+(?=\d)/, '') || '0'}.${rest.join('').slice(0, 3)}`;
+}
+const formatQty = (raw: unknown) => (raw === null || raw === undefined ? '' : String(raw).replace('.', ','));
+
+// Harga di bawah Rp1.000 biasanya salah ketik (17 maksudnya 17.000): tawarkan perbaikan sekali klik
+export function ThousandHint({ value, onFix }: { value: unknown; onFix: (v: string) => void }) {
+  const n = Number(value);
+  if (!(n > 0 && n < 1000)) return null;
+  return (
+    <span className="thousand-hint">
+      {rp(n)} — maksudnya <button type="button" className="link" onClick={() => onFix(String(Math.round(n * 1000)))}>{rp(n * 1000)}</button>?
+    </span>
+  );
+}
+
 export function Suffix({ value, onChange, suffix, ...p }: { value: any; onChange: (v: string) => void; suffix: string } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
-  // satuan Rp memakai pemisah ribuan; persen/jumlah tetap angka biasa
+  // satuan Rp memakai pemisah ribuan; persen/jumlah tetap angka biasa (desimal pakai koma)
   return (
     <div className="input-affix suffix">
       {suffix === 'Rp'
         ? <AmountInput {...p} value={value} onChange={onChange} />
-        : <input {...p} className="input num" inputMode="decimal" value={value ?? ''} onChange={(e) => onChange(e.target.value.replace(/[^\d.]/g, ''))} />}
+        : <input {...p} className={`input num ${p.className ?? ''}`} inputMode="decimal" placeholder={p.placeholder ?? '0'} value={formatQty(value)} onChange={(e) => onChange(parseQty(e.target.value))} />}
       <span>{suffix}</span>
     </div>
   );

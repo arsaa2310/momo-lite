@@ -316,6 +316,11 @@ table.t { width: 100%; border-collapse: collapse; }
 .lines th { font-size: 12px; font-weight: 500; color: var(--ink-3); text-align: left; padding: 0 6px 6px 0; }
 .lines td { padding: 4px 6px 4px 0; vertical-align: top; }
 .lines td.x { width: 32px; }
+.lines td.cell-text { padding-top: 10px; }
+.date-range { display: flex; align-items: center; gap: 8px; }
+.date-range .input { width: 150px; }
+.row-actions { display: inline-flex; gap: 2px; }
+.thousand-hint { display: block; margin-top: 4px; font-size: 12px; color: var(--amber); }
 .bar-inline { height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
 .bar-inline > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .dots { display: inline-flex; gap: 4px; }
@@ -359,18 +364,39 @@ table.t { width: 100%; border-collapse: collapse; }
   .sheet-head, .sheet-body, .sheet-foot { padding-left: 16px; padding-right: 16px; }
   .sheet-foot .btn { flex: 1 1 auto; justify-content: center; }
   .pop { max-width: calc(100vw - 32px); }
-  /* form baris barang: tiap baris jadi kartu */
+  /* form baris barang & tabel daftar: tiap baris jadi kartu dua kolom (kolom .full selebar kartu),
+     tombol hapus / ubah (.x) di pojok kanan atas agar tidak memakan lebar isian */
   .lines, .lines tbody, .mcards, .mcards tbody { display: block; width: 100%; }
   .lines thead, .mcards thead { display: none; }
   .mcards tr { margin: 8px; }
   .mcards td, .mcards tr:last-child td { border-bottom: 0; }
   .t.mcards td { white-space: normal; }
-  .lines tr, .mcards tr { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px 10px; align-items: end;
-    padding: 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; background: var(--surface-2); }
-  .lines td, .t.mcards td { display: block; padding: 0; width: auto !important; min-width: 0 !important; }
-  .lines td:first-child, .mcards td:first-child { grid-column: 1 / -1; }
-  .lines td.x, .mcards td.x { grid-column: 3; grid-row: 2; }
+  .lines tr, .mcards tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; align-items: start; position: relative;
+    padding: 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; background: var(--surface-2); }
+  .lines td, .t.mcards td, .panel > .table-wrap > .t.mcards td:first-child { display: block; padding: 0; width: auto !important; min-width: 0 !important; max-width: none !important; text-align: left; }
+  .lines td:first-child, .mcards td:first-child, .lines td.full, .mcards td.full { grid-column: 1 / -1; }
+  .lines td.x, .t.mcards td.x { position: absolute; top: 6px; right: 6px; }
+  .lines tr:has(> td.x) > td:first-child { padding-right: 38px; }
+  .panel > .table-wrap > .t.mcards tr:has(> td.x) > td:first-child { padding-right: 70px; }
+  .lines td.cell-text { padding-top: 0; font-weight: 500; }
   .lines td[data-label]::before, .mcards td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; color: var(--ink-3); margin-bottom: 4px; font-weight: 500; }
+  .mcards tfoot { display: block; }
+  .mcards tfoot tr { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 10px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: var(--surface-2); }
+  .mcards tfoot td { padding: 0 !important; border: 0 !important; background: none !important; }
+  /* isian lebih tinggi & 16px agar mudah disentuh dan HP tidak memperbesar layar saat mengetik */
+  .input, .select { height: 40px; font-size: 16px; }
+  .textarea { font-size: 16px; }
+  .btn { height: 38px; }
+  .btn.sm { height: 32px; }
+  .btn.icon { width: 36px; }
+  .seg { display: flex; width: 100%; }
+  .seg button { flex: 1 1 0; height: auto; min-height: 34px; padding: 6px 8px; white-space: normal; line-height: 1.2; }
+  .page-head > .btn { flex: 1 1 auto; justify-content: center; }
+  .date-range { flex: 1 1 100%; }
+  .date-range .input { flex: 1 1 0; width: auto; }
+  .sheet { bottom: auto; height: 100dvh; }
+  .sheet-foot > .muted { flex: 1 1 100%; }
+  .arrival-price { width: auto; }
   .login { grid-template-columns: 1fr; }
   .login-art { display: none; }
   .page { padding: 18px 16px 40px; }
@@ -505,6 +531,9 @@ kbd { font: 500 11px var(--font); border: 1px solid var(--line); border-bottom-w
 .arrival-head .spacer { flex: 1; }
 .arrival-body { display: grid; grid-template-columns: 1fr 220px; gap: 14px; padding: 12px; font-size: 13.5px; }
 .arrival-items { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.arrival-line { flex-wrap: wrap; }
+.arrival-line > span:first-child { min-width: 120px; }
+.arrival-price { width: 120px; text-align: right; }
 .arrival-excess { margin-top: 6px; padding: 10px; border-radius: 6px; background: var(--amber-soft); display: flex; flex-direction: column; gap: 6px; }
 .arrival-photos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .input.warn { border-color: var(--amber); background: var(--amber-soft); }

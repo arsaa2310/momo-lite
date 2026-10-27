@@ -3,7 +3,7 @@ import { CheckCheck, Plus, Printer, Trash2, Truck, X } from 'lucide-react';
 import { api, qs } from '../api';
 import { useSession } from '../session';
 import { useApi, useAction } from '../ui/hooks';
-import { Badge, Confirm, DocCard, DocGrid, Empty, Field, Input, Loading, Money, PageHead, Pager, SearchBox, Seg, Select, Sheet, StageFilter, Suffix } from '../ui/kit';
+import { Badge, Confirm, DocCard, DocGrid, Empty, Field, Input, Loading, Money, PageHead, Pager, SearchBox, Seg, Select, Sheet, StageFilter, Suffix, ThousandHint } from '../ui/kit';
 import { ExtraPhotos, PhotoInput, PhotoStrip, type Photo } from '../ui/photo';
 import { date, dateTime, qty as fq, rp, todayStr } from '../format';
 
@@ -42,9 +42,11 @@ export default function PurchaseOrders() {
       ]} />
       <div className="toolbar">
         <SearchBox value={f.q} onChange={(v) => set('q', v)} placeholder="Cari nomor PO / supplier…" />
-        <Input type="date" value={f.from} onChange={(e) => set('from', e.target.value)} style={{ width: 150 }} />
-        <span className="muted">s/d</span>
-        <Input type="date" value={f.to} onChange={(e) => set('to', e.target.value)} style={{ width: 150 }} />
+        <div className="date-range">
+          <Input type="date" value={f.from} onChange={(e) => set('from', e.target.value)} />
+          <span className="muted">s/d</span>
+          <Input type="date" value={f.to} onChange={(e) => set('to', e.target.value)} />
+        </div>
       </div>
       {isLoading ? <Loading /> : !data?.data.length ? (
         <div className="panel"><Empty title="Belum ada PO">{f.status || f.q ? 'Tidak ada PO yang cocok dengan filter.' : <>Klik <b>Buat PO</b> untuk memesan bahan ke supplier.</>}</Empty></div>
@@ -121,19 +123,20 @@ function CreatePo({ onClose, onCreated }: { onClose: () => void; onCreated: (ids
                   <tr key={l.key}>
                     <td data-label="Bahan"><Select value={l.item_id} onChange={(e) => pickItem(l.key, e.target.value)} placeholder="— Pilih bahan —"
                       options={opt.items.map((i: any) => ({ value: i.id, label: `${i.name} (${i.unit})${i.suppliers.length ? '' : ' — belum ada supplier'}` }))} /></td>
-                    <td data-label="Supplier">
+                    <td data-label="Supplier" className="full">
                       <Select value={l.supplier_id} onChange={(e) => pickSupplier(l.key, l, e.target.value)} disabled={!it} placeholder={it && !sups.length ? 'Belum ada supplier' : '— Supplier —'}
                         options={sups.map((s: any, i: number) => ({ value: s.supplier_id, label: `${s.name} · ${s.price != null ? rp(s.price) : 'tanpa harga'}${i === 0 && sups.length > 1 ? ' (termurah)' : ''}` }))} />
                     </td>
                     <td data-label="Jumlah"><Suffix value={l.qty} onChange={(v) => upd(l.key, { qty: v })} suffix={it?.unit ?? '—'} /></td>
-                    <td data-label="Harga"><Money value={l.unit_cost} onChange={(v) => upd(l.key, { unit_cost: v })} /></td>
-                    <td data-label="Subtotal" className="right tnum" style={{ paddingTop: 10 }}>{rp((Number(l.qty) || 0) * (Number(l.unit_cost) || 0))}</td>
+                    <td data-label="Harga"><Money value={l.unit_cost} onChange={(v) => upd(l.key, { unit_cost: v })} /><ThousandHint value={l.unit_cost} onFix={(v) => upd(l.key, { unit_cost: v })} /></td>
+                    <td data-label="Subtotal" className="right tnum cell-text full">{rp((Number(l.qty) || 0) * (Number(l.unit_cost) || 0))}</td>
                     <td className="x"><button className="btn ghost icon" aria-label="Hapus baris" onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((x) => x.key !== l.key) : [newLine()]))}><Trash2 size={15} /></button></td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: -6 }}>Jumlah boleh desimal, pakai koma — mis. 0,5 atau 1,25.</div>
           <div><button className="btn sm" onClick={() => setLines((ls) => [...ls, newLine()])}><Plus size={14} /> Tambah bahan</button></div>
           <div className="grid2">
             <Field label="Tanggal kirim diharapkan (opsional)"><Input type="date" value={expected} min={todayStr()} onChange={(e) => setExpected(e.target.value)} /></Field>
@@ -191,7 +194,7 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
 
         <div className="panel">
           <div className="table-wrap">
-            <table className="t compact">
+            <table className="t compact mcards">
               <thead><tr><th>Bahan</th><th className="num">Dipesan</th><th className="num">Diterima</th><th className="num">Harga PO</th><th className="num">Subtotal</th></tr></thead>
               <tbody>
                 {p.lines.map((l: any) => {
@@ -199,10 +202,10 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
                   return (
                     <tr key={l.id}>
                       <td><b>{l.name}</b><span className="sub">{l.sub_category ?? l.category ?? ''}</span></td>
-                      <td className="num">{fq(l.qty)} {l.unit}</td>
-                      <td className="num"><span className={done ? 'up' : Number(l.received_qty) > 0 ? '' : 'muted'}>{fq(l.received_qty)}</span>{Number(l.received_qty) > Number(l.qty) && <span className="sub">lebih {fq(Number(l.received_qty) - Number(l.qty))}</span>}</td>
-                      <td className="num">{rp(l.unit_cost)}</td>
-                      <td className="num">{rp(Number(l.qty) * Number(l.unit_cost))}</td>
+                      <td className="num" data-label="Dipesan">{fq(l.qty)} {l.unit}</td>
+                      <td className="num" data-label="Diterima"><span className={done ? 'up' : Number(l.received_qty) > 0 ? '' : 'muted'}>{fq(l.received_qty)}</span>{Number(l.received_qty) > Number(l.qty) && <span className="sub">lebih {fq(Number(l.received_qty) - Number(l.qty))}</span>}</td>
+                      <td className="num" data-label="Harga PO">{rp(l.unit_cost)}</td>
+                      <td className="num" data-label="Subtotal">{rp(Number(l.qty) * Number(l.unit_cost))}</td>
                     </tr>
                   );
                 })}
@@ -229,10 +232,10 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
             <div className="arrival-body">
               <div className="arrival-items">
                 {rc.lines.map((l: any) => (
-                  <div key={l.po_line_id} className="row">
+                  <div key={l.po_line_id} className="row arrival-line">
                     <span style={{ flex: 1 }}>{l.name}</span>
                     <span className="tnum">{fq(l.qty)} {l.unit}{Number(l.excess_qty) > 0 && <span className="muted"> (lebih {fq(l.excess_qty)})</span>}</span>
-                    <span className="tnum" style={{ width: 120, textAlign: 'right' }}>
+                    <span className="tnum arrival-price">
                       {Number(l.unit_cost) !== Number(l.po_unit_cost) ? <><s className="muted">{rp(l.po_unit_cost)}</s> {rp(l.unit_cost)}</> : rp(l.unit_cost)}
                     </span>
                   </div>
@@ -333,7 +336,7 @@ function TermsPanel({ p }: { p: any }) {
 // ---------- Terima barang ----------
 function ReceiveSheet({ p, onClose }: { p: any; onClose: () => void }) {
   const { data: opt } = useApi<any>('/master/options');
-  const remaining = (l: any) => Math.max(0, Number(l.qty) - Number(l.received_qty));
+  const remaining = (l: any) => Math.max(0, Math.round((Number(l.qty) - Number(l.received_qty)) * 1000) / 1000);
   const [received, setReceived] = useState<Record<number, string>>(() => Object.fromEntries(p.lines.map((l: any) => [l.id, remaining(l) ? String(remaining(l)) : ''])));
   const [prices, setPrices] = useState<Record<number, string>>(() => Object.fromEntries(p.lines.map((l: any) => [l.id, String(l.unit_cost)])));
   const firstArrival = !p.receipts.some((r: any) => !r.reversed_at);
@@ -369,16 +372,18 @@ function ReceiveSheet({ p, onClose }: { p: any; onClose: () => void }) {
               return (
                 <tr key={l.id}>
                   <td data-label="Bahan"><b>{l.name}</b><div className="muted" style={{ fontSize: 12 }}>dipesan {fq(l.qty)} {l.unit} · diterima {fq(l.received_qty)}</div></td>
-                  <td data-label="Sisa" className="tnum" style={{ paddingTop: 10 }}>{fq(remaining(l))} {l.unit}</td>
+                  <td data-label="Sisa pesanan" className="tnum cell-text">{fq(remaining(l))} {l.unit}</td>
                   <td data-label="Jumlah datang"><Suffix value={received[l.id]} onChange={(v) => setReceived({ ...received, [l.id]: v })} suffix={l.unit} className={over ? 'warn' : ''} /></td>
                   <td data-label="Harga nota"><Money value={prices[l.id]} onChange={(v) => setPrices({ ...prices, [l.id]: v })} className={diff ? 'warn' : ''} />
+                    <ThousandHint value={prices[l.id]} onFix={(v) => setPrices({ ...prices, [l.id]: v })} />
                     {diff && <div className="muted" style={{ fontSize: 12 }}>harga PO {rp(l.unit_cost)}</div>}</td>
-                  <td data-label="Subtotal" className="right tnum" style={{ paddingTop: 10 }}>{rp(qn * (Number(prices[l.id]) || 0))}</td>
+                  <td data-label="Subtotal" className="right tnum cell-text">{rp(qn * (Number(prices[l.id]) || 0))}</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        <div className="muted" style={{ fontSize: 12.5, marginTop: -6 }}>Isi 0 untuk bahan yang belum datang. Jumlah boleh desimal, pakai koma — mis. 0,5.</div>
         {excess && <Field label="Catatan kelebihan barang (wajib)" hint="Jumlah datang melebihi sisa pesanan"><Input className="warn" value={f.excess_note} onChange={(e) => setF({ ...f, excess_note: e.target.value })} placeholder="mis. bonus dari supplier / salah kirim" /></Field>}
         {priceDiff && <Field label="Catatan selisih harga (wajib)" hint="Harga nota berbeda dari harga PO"><Input className="warn" value={f.price_note} onChange={(e) => setF({ ...f, price_note: e.target.value })} placeholder="mis. harga naik per minggu ini" /></Field>}
 

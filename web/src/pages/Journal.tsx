@@ -28,9 +28,11 @@ export default function Journal() {
         <button className="btn primary" disabled={busy} onClick={exportXlsx}><FileSpreadsheet size={15} /> {busy ? 'Menyiapkan…' : 'Ekspor Excel'}</button>
       </PageHead>
       <div className="toolbar">
-        <Input type="date" value={p.from} onChange={(e) => setP({ ...p, from: e.target.value })} style={{ width: 150 }} />
-        <span className="muted">s/d</span>
-        <Input type="date" value={p.to} onChange={(e) => setP({ ...p, to: e.target.value })} style={{ width: 150 }} />
+        <div className="date-range">
+          <Input type="date" value={p.from} onChange={(e) => setP({ ...p, from: e.target.value })} />
+          <span className="muted">s/d</span>
+          <Input type="date" value={p.to} onChange={(e) => setP({ ...p, to: e.target.value })} />
+        </div>
         <Seg value={term} onChange={setTerm} options={[{ value: '', label: 'Semua' }, { value: 'PTH', label: 'PTH' }, { value: 'PKH', label: 'PKH' }]} />
       </div>
       {t && (
