@@ -1,19 +1,24 @@
 import { useState } from 'react';
-import { Plus, KeyRound } from 'lucide-react';
+import { Plus, KeyRound, Unlink } from 'lucide-react';
 import { api } from '../../api';
 import { useApi, useAction } from '../../ui/hooks';
 import { Badge, Confirm, Empty, Field, Input, Loading, PageHead, Select, Sheet, Toggle } from '../../ui/kit';
 import { dateTime } from '../../format';
 
-const ROLE = { central: 'Central Admin', purchasing: 'Purchasing (PO)' } as const;
+const ROLE: Record<string, { label: string; tone: 'accent' | 'blue' | 'green' | 'amber'; desc: string }> = {
+  owner: { label: 'Owner', tone: 'green', desc: 'Owner — memantau semua resto miliknya, menyetujui PO & pengeluaran, atur shift' },
+  central: { label: 'Central Admin', tone: 'accent', desc: 'Central Admin — master data, K/T, pelunasan, jurnal, setujui pengeluaran lain' },
+  manager: { label: 'Manager', tone: 'amber', desc: 'Manager — setujui PO, pendapatan shift, pengeluaran lain, terima barang' },
+  purchasing: { label: 'Purchasing (PO)', tone: 'blue', desc: 'Purchasing (PO) — buat PO, terima barang, belanja' },
+};
 
-// Panel admin: 1) buat resto, 2) daftarkan Central Admin & orang PO tiap resto, 3) log ada di menu Log Aktivitas.
+// Panel admin: 1) buat resto, 2) daftarkan Owner, Central Admin, Manager & orang PO tiap resto, 3) log ada di menu Log Aktivitas.
 export default function Restos() {
   const { data, isLoading } = useApi<any[]>('/admin/restos');
   const [edit, setEdit] = useState<any | null>(null);
   return (
     <>
-      <PageHead title="Resto & Akun" sub="Buat resto, lalu daftarkan Central Admin dan orang PO (Purchasing) untuk resto itu.">
+      <PageHead title="Resto & Akun" sub="Buat resto, lalu daftarkan Owner, Central Admin, Manager, dan orang PO (Purchasing) untuk resto itu.">
         <button className="btn primary" onClick={() => setEdit({})}><Plus size={15} /> Resto baru</button>
       </PageHead>
       {isLoading ? <Loading /> : !data?.length ? (
@@ -22,13 +27,15 @@ export default function Restos() {
         <div className="panel">
           <div className="table-wrap">
             <table className="t">
-              <thead><tr><th>Resto</th><th>Kode</th><th className="num">Central Admin</th><th className="num">Purchasing</th><th className="num">PO</th><th>Aktivitas terakhir</th><th>Status</th></tr></thead>
+              <thead><tr><th>Resto</th><th>Kode</th><th className="num">Owner</th><th className="num">Central Admin</th><th className="num">Manager</th><th className="num">Purchasing</th><th className="num">PO</th><th>Aktivitas terakhir</th><th>Status</th></tr></thead>
               <tbody>
                 {data.map((r) => (
                   <tr key={r.id} className="click" onClick={() => setEdit(r)}>
                     <td><b>{r.name}</b>{r.address && <span className="sub">{r.address}</span>}</td>
                     <td className="mono">{r.code}</td>
+                    <td className="num">{r.owner_count || <span className="muted">0</span>}</td>
                     <td className="num">{r.central_count || <span className="muted">0</span>}</td>
+                    <td className="num">{r.manager_count || <span className="muted">0</span>}</td>
                     <td className="num">{r.purchasing_count || <span className="muted">0</span>}</td>
                     <td className="num">{r.po_count}</td>
                     <td>{r.last_activity ? dateTime(r.last_activity) : <span className="muted">—</span>}</td>
@@ -80,9 +87,10 @@ function Users({ restoId }: { restoId: number }) {
   const [shown, setShown] = useState<{ name: string; email: string; password: string } | null>(null);
   const [reset, setReset] = useState<any | null>(null);
   const add = useAction(() => api.post(`/admin/restos/${restoId}/users`, f), {
-    success: 'Akun ditambahkan', invalidate: ['/admin'],
+    success: (r: any) => (r.linked ? 'Owner yang sudah ada ditautkan ke resto ini' : 'Akun ditambahkan'), invalidate: ['/admin'],
     onDone: (r: any) => { if (r.password) setShown({ name: f.name, email: f.email, password: r.password }); setF({ ...f, name: '', email: '', password: '' }); },
   });
+  const unlink = useAction((u: any) => api.del(`/admin/restos/${restoId}/owners/${u.id}`), { success: 'Owner dilepas dari resto ini', invalidate: ['/admin'] });
   const toggle = useAction((u: any) => api.put(`/admin/users/${u.id}`, { is_active: !u.is_active }), { success: 'Akun diperbarui', invalidate: ['/admin'] });
   const doReset = useAction((u: any) => api.post(`/admin/users/${u.id}/reset-password`), {
     invalidate: ['/admin'], onDone: (r: any) => { setShown({ name: reset.name, email: reset.email, password: r.password }); setReset(null); },
@@ -102,14 +110,17 @@ function Users({ restoId }: { restoId: number }) {
           <table className="t compact">
             <thead><tr><th>Nama</th><th>Peran</th><th>Terakhir masuk</th><th>Status</th><th /></tr></thead>
             <tbody>
-              {!data?.length && <tr><td colSpan={5} className="muted">Belum ada akun. Tambahkan Central Admin dan orang PO di bawah.</td></tr>}
+              {!data?.length && <tr><td colSpan={5} className="muted">Belum ada akun. Tambahkan Owner, Central Admin, Manager, dan orang PO di bawah.</td></tr>}
               {data?.map((u) => (
                 <tr key={u.id}>
                   <td><b>{u.name}</b><span className="sub">{u.email}</span></td>
-                  <td>{u.role === 'central' ? <Badge tone="accent">{ROLE.central}</Badge> : <Badge tone="blue">{ROLE.purchasing}</Badge>}</td>
+                  <td><Badge tone={ROLE[u.role]?.tone}>{ROLE[u.role]?.label ?? u.role}</Badge>{u.role === 'owner' && u.owner_restos && <span className="sub">resto: {u.owner_restos}</span>}</td>
                   <td>{u.last_login_at ? dateTime(u.last_login_at) : <span className="muted">belum pernah</span>}</td>
                   <td><label className="row"><Toggle checked={u.is_active} onChange={() => toggle.mutate(u)} />{u.is_active ? 'Aktif' : 'Nonaktif'}</label></td>
-                  <td className="right"><button className="btn sm" onClick={() => setReset(u)}><KeyRound size={13} /> Reset sandi</button></td>
+                  <td className="right">
+                    {u.role === 'owner' && <button className="btn sm ghost" title="Lepas dari resto ini" disabled={unlink.isPending} onClick={() => unlink.mutate(u)}><Unlink size={13} /> Lepas</button>}
+                    <button className="btn sm" onClick={() => setReset(u)}><KeyRound size={13} /> Reset sandi</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -120,11 +131,11 @@ function Users({ restoId }: { restoId: number }) {
         <div className="panel-head"><h3>Tambah akun</h3></div>
         <div className="panel-body grid2">
           <Field label="Peran">
-            <Select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} options={[{ value: 'central', label: 'Central Admin — master data, lihat semua, K/T, jurnal' }, { value: 'purchasing', label: 'Purchasing (PO) — buat PO, terima barang, belanja' }]} />
+            <Select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} options={Object.entries(ROLE).map(([value, r]) => ({ value, label: r.desc }))} />
           </Field>
           <Field label="Nama"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
           <Field label="Email (untuk masuk)"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} required /></Field>
-          <Field label="Kata sandi awal" hint="Kosongkan agar dibuat acak (ditampilkan sekali)"><Input value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} minLength={8} /></Field>
+          <Field label="Kata sandi awal" hint={f.role === 'owner' ? 'Owner yang sudah punya akun (email sama) cukup ditautkan — kata sandi tidak berubah' : 'Kosongkan agar dibuat acak (ditampilkan sekali)'}><Input value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} minLength={8} /></Field>
           <div><button className="btn primary" disabled={add.isPending}><Plus size={15} /> Tambah akun</button></div>
         </div>
       </form>

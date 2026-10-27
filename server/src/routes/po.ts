@@ -2,14 +2,16 @@ import { Router, type Request } from 'express';
 import type { PoolClient } from 'pg';
 import { one, q, tx } from '../lib/db.ts';
 import { HttpError, bad, notFound, num } from '../lib/http.ts';
-import { only, restoId } from '../lib/auth.ts';
+import { ADMIN_ROLES, only, restoId } from '../lib/auth.ts';
 import { log } from '../lib/audit.ts';
 import { nextNumber } from '../lib/numbers.ts';
 import { extraPhotos, requirePhoto } from '../lib/uploads.ts';
 
-// Alur PO versi lite (tanpa approval):
+// Alur PO versi lite:
 // 1. Purchasing membuat PO: pilih bahan → supplier (harga dari Central Admin, termurah dulu, boleh diubah).
 //    Satu form boleh beberapa supplier → otomatis dipecah menjadi PO per supplier. Harga PO menjadi harga terbaru supplier itu.
+//    PO buatan Purchasing menunggu persetujuan Manager / Owner (boleh ditolak dengan alasan); PO buatan Manager, Central Admin,
+//    atau Owner langsung disetujui. Harga supplier baru diperbarui saat PO disetujui.
 // 2. Central Admin menetapkan K (kredit / hutang, PKH) atau T (tunai, PTH). K/T dari Central Admin terkunci untuk penerima.
 //    Bila belum diatur, penerima memilih K/T saat barang pertama datang. Setelah barang datang hanya Central Admin yang bisa
 //    mengubah K/T (status bayar kedatangan ikut berubah) selama hutangnya belum dilunasi.
@@ -36,8 +38,9 @@ r.get('/po', async (req, res) => {
   const where = ['p.resto_id = $1'];
   const st = String(req.query.status ?? '');
   if (st === 'unset') where.push(`p.payment_terms IS NULL AND p.status IN ('open', 'partial')`);
+  else if (st === 'mine') { params.push(req.s.userId); where.push(`p.created_by = $${params.length}`); }
   else if (st === 'debt') where.push(`p.payment_terms = 'credit' AND p.paid_date IS NULL AND ${DEBT_SQL} > 0`);
-  else if (['open', 'partial', 'received', 'cancelled'].includes(st)) { params.push(st); where.push(`p.status = $${params.length}`); }
+  else if (['approval', 'rejected', 'open', 'partial', 'received', 'cancelled'].includes(st)) { params.push(st); where.push(`p.status = $${params.length}`); }
   if (req.query.supplier_id) { params.push(Number(req.query.supplier_id)); where.push(`p.supplier_id = $${params.length}`); }
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from))) { params.push(`${req.query.from}T00:00:00+07:00`); where.push(`p.created_at >= $${params.length}`); }
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to))) { params.push(`${req.query.to}T23:59:59.999+07:00`); where.push(`p.created_at <= $${params.length}`); }
@@ -46,7 +49,7 @@ r.get('/po', async (req, res) => {
   const base = `FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id WHERE ${where.join(' AND ')}`;
   const total = (await one(`SELECT count(*)::int n ${base}`, params)).n;
   const data = await q(
-    `SELECT p.id, p.number, p.status, p.payment_terms, p.terms_by_central, p.created_at, p.expected_date, p.received_at, p.paid_date, p.notes,
+    `SELECT p.id, p.number, p.status, p.payment_terms, p.terms_by_central, p.created_at, p.expected_date, p.received_at, p.paid_date, p.notes, p.created_by,
             s.name AS supplier_name, u.name AS created_by_name,
             (SELECT sum(l.qty * l.unit_cost) FROM purchase_order_lines l WHERE l.purchase_order_id = p.id) AS total,
             (SELECT count(*)::int FROM purchase_order_lines l WHERE l.purchase_order_id = p.id) AS line_count,
@@ -76,9 +79,11 @@ r.get('/po/:id', async (req, res) => {
   const head = await one(
     `SELECT p.*, s.name AS supplier_name, s.phone AS supplier_phone, s.address AS supplier_address, s.contact_name AS supplier_contact, s.default_terms AS supplier_terms,
             r.name AS resto_name, r.code AS resto_code, r.address AS resto_address, r.phone AS resto_phone,
-            u1.name AS created_by_name, u2.name AS closed_by_name, u3.name AS paid_by_name, pa.name AS paid_account_name, ${DEBT_SQL} AS debt
+            u1.name AS created_by_name, u2.name AS closed_by_name, u3.name AS paid_by_name, u4.name AS approved_by_name, u4.role AS approved_by_role,
+            pa.name AS paid_account_name, ${DEBT_SQL} AS debt
        FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id JOIN restos r ON r.id = p.resto_id
        LEFT JOIN users u1 ON u1.id = p.created_by LEFT JOIN users u2 ON u2.id = p.closed_by LEFT JOIN users u3 ON u3.id = p.paid_by
+       LEFT JOIN users u4 ON u4.id = p.approved_by
        LEFT JOIN pay_accounts pa ON pa.id = p.paid_account_id
       WHERE p.id = $1`,
     [p.id],
@@ -101,7 +106,8 @@ r.get('/po/:id', async (req, res) => {
 });
 
 // ---------- Buat PO (dipecah per supplier) ----------
-r.post('/po', only('purchasing', 'central'), async (req, res) => {
+// Purchasing → menunggu persetujuan; Manager / Central Admin / Owner → langsung disetujui
+r.post('/po', only('purchasing', 'manager', 'central', 'owner'), async (req, res) => {
   const rid = restoId(req);
   const raw: any[] = req.body.lines ?? [];
   if (!raw.length) throw bad('Tambahkan minimal satu bahan');
@@ -126,18 +132,19 @@ r.post('/po', only('purchasing', 'central'), async (req, res) => {
       const cost = l.unit_cost === undefined || l.unit_cost === null || l.unit_cost === '' ? Number(link.price ?? 0) : num(l.unit_cost, `Harga ${it.name}`);
       bySupplier.set(sup.id, [...(bySupplier.get(sup.id) ?? []), { item_id: it.id, qty, unit_cost: cost }]);
     }
-    const out: { id: number; number: string }[] = [];
+    const needsApproval = req.s.role === 'purchasing';
+    const out: { id: number; number: string; status: string }[] = [];
     for (const [supplierId, ls] of bySupplier) {
       const po = await one(
-        `INSERT INTO purchase_orders (resto_id, number, supplier_id, notes, expected_date, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, number`,
-        [rid, await nextNumber(c, 'purchase_orders', 'PO', rid), supplierId, notes, expected, req.s.userId], c);
-      for (const l of ls) {
+        `INSERT INTO purchase_orders (resto_id, number, supplier_id, notes, expected_date, created_by, status, approved_by, approved_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, number, status`,
+        [rid, await nextNumber(c, 'purchase_orders', 'PO', rid), supplierId, notes, expected, req.s.userId,
+         needsApproval ? 'approval' : 'open', needsApproval ? null : req.s.userId, needsApproval ? null : new Date()], c);
+      for (const l of ls)
         await q(`INSERT INTO purchase_order_lines (purchase_order_id, item_id, qty, unit_cost) VALUES ($1,$2,$3,$4)`, [po.id, l.item_id, l.qty, l.unit_cost], c);
-        // harga PO terbaru menjadi harga supplier
-        if (l.unit_cost > 0) await q(`UPDATE supplier_items SET price = $3, updated_at = now() WHERE supplier_id = $1 AND item_id = $2`, [supplierId, l.item_id, l.unit_cost], c);
-      }
+      if (!needsApproval) await updateSupplierPrices(c, po.id);
       const total = ls.reduce((s, l) => s + l.qty * l.unit_cost, 0);
-      await poLog(req, c, po.id, 'create', `Membuat ${po.number} ke ${sups.get(supplierId)!.name}: ${ls.length} bahan, ${rpText(total)}`);
+      await poLog(req, c, po.id, 'create', `Membuat ${po.number} ke ${sups.get(supplierId)!.name}: ${ls.length} bahan, ${rpText(total)}${needsApproval ? ' — menunggu persetujuan Manager' : ''}`);
       out.push(po);
     }
     return out;
@@ -145,12 +152,41 @@ r.post('/po', only('purchasing', 'central'), async (req, res) => {
   res.status(201).json({ purchase_orders: made });
 });
 
-// ---------- Batalkan PO (belum ada barang datang) ----------
-r.post('/po/:id/cancel', only('purchasing', 'central'), async (req, res) => {
+// harga PO yang disetujui menjadi harga terbaru supplier
+async function updateSupplierPrices(c: PoolClient, poId: number) {
+  await q(`UPDATE supplier_items si SET price = l.unit_cost, updated_at = now() FROM purchase_order_lines l JOIN purchase_orders p ON p.id = l.purchase_order_id
+            WHERE l.purchase_order_id = $1 AND si.supplier_id = p.supplier_id AND si.item_id = l.item_id AND l.unit_cost > 0`, [poId], c);
+}
+
+// ---------- Persetujuan PO buatan Purchasing (Manager / Owner) ----------
+r.post('/po/:id/approve', only('manager', 'owner'), async (req, res) => {
   await tx(async (c) => {
     const p = await ownedPo(req, Number(req.params.id) || 0, c);
-    if (p.status !== 'open') throw bad('Hanya PO yang belum ada barang datang yang bisa dibatalkan. Untuk PO diterima sebagian, gunakan Tutup sisa PO.');
-    if (req.s.role === 'purchasing' && p.created_by !== req.s.userId) throw new HttpError(403, 'Hanya pembuat PO atau Central Admin yang bisa membatalkan');
+    if (p.status !== 'approval') throw bad('PO ini tidak sedang menunggu persetujuan');
+    await q(`UPDATE purchase_orders SET status = 'open', approved_by = $2, approved_at = now() WHERE id = $1`, [p.id, req.s.userId], c);
+    await updateSupplierPrices(c, p.id);
+    await poLog(req, c, p.id, 'approve', `Menyetujui ${p.number}`);
+  });
+  res.json({ ok: true });
+});
+r.post('/po/:id/reject', only('manager', 'owner'), async (req, res) => {
+  await tx(async (c) => {
+    const p = await ownedPo(req, Number(req.params.id) || 0, c);
+    if (p.status !== 'approval') throw bad('PO ini tidak sedang menunggu persetujuan');
+    const note = String(req.body.note ?? '').trim();
+    if (!note) throw bad('Isi alasan penolakan');
+    await q(`UPDATE purchase_orders SET status = 'rejected', approved_by = $2, approved_at = now(), reject_note = $3 WHERE id = $1`, [p.id, req.s.userId, note], c);
+    await poLog(req, c, p.id, 'reject', `Menolak ${p.number}: ${note}`);
+  });
+  res.json({ ok: true });
+});
+
+// ---------- Batalkan PO (belum ada barang datang) ----------
+r.post('/po/:id/cancel', only('purchasing', 'manager', 'central', 'owner'), async (req, res) => {
+  await tx(async (c) => {
+    const p = await ownedPo(req, Number(req.params.id) || 0, c);
+    if (!['approval', 'open'].includes(p.status)) throw bad('Hanya PO yang belum ada barang datang yang bisa dibatalkan. Untuk PO diterima sebagian, gunakan Tutup sisa PO.');
+    if (req.s.role === 'purchasing' && p.created_by !== req.s.userId) throw new HttpError(403, 'Hanya pembuat PO, Manager, atau Central Admin yang bisa membatalkan');
     const note = String(req.body.note ?? '').trim();
     if (!note) throw bad('Isi alasan pembatalan');
     await q(`UPDATE purchase_orders SET status = 'cancelled', closed_by = $2, close_note = $3 WHERE id = $1`, [p.id, req.s.userId, note], c);
@@ -160,10 +196,10 @@ r.post('/po/:id/cancel', only('purchasing', 'central'), async (req, res) => {
 });
 
 // ---------- K/T, jatuh tempo (Central Admin) ----------
-r.put('/po/:id/terms', only('central'), async (req, res) => {
+r.put('/po/:id/terms', only(...ADMIN_ROLES), async (req, res) => {
   await tx(async (c) => {
     const p = await ownedPo(req, Number(req.params.id) || 0, c);
-    if (p.status === 'cancelled') throw bad('PO ini sudah dibatalkan');
+    if (p.status === 'cancelled' || p.status === 'rejected') throw bad('PO ini sudah dibatalkan / ditolak');
     const terms = req.body.payment_terms === 'credit' ? 'credit' : req.body.payment_terms === 'cash' ? 'cash' : null;
     if (!terms) throw bad('Pilih K (kredit / hutang) atau T (tunai)');
     const receipts = await q(`SELECT * FROM po_receipts WHERE purchase_order_id = $1 AND reversed_at IS NULL ORDER BY id FOR UPDATE`, [p.id], c);
@@ -197,11 +233,12 @@ async function payAccount(c: PoolClient, rid: number, id: unknown) {
 }
 
 // ---------- Terima barang (sebagian / penuh) ----------
-r.post('/po/:id/receive', only('purchasing', 'central'), async (req, res) => {
+r.post('/po/:id/receive', only('purchasing', 'manager', 'central', 'owner'), async (req, res) => {
   const rid = restoId(req);
   const out = await tx(async (c) => {
     const p = await ownedPo(req, Number(req.params.id) || 0, c);
-    if (!['open', 'partial'].includes(p.status)) throw bad('PO ini sudah selesai atau dibatalkan');
+    if (p.status === 'approval') throw bad('PO ini belum disetujui Manager. Barang belum bisa diterima.');
+    if (!['open', 'partial'].includes(p.status)) throw bad('PO ini sudah selesai, ditolak, atau dibatalkan');
     const goods = await requirePhoto(c, rid, 'receiving', req.body.goods_photo_id, 'foto barang yang datang');
     const nota = await requirePhoto(c, rid, 'receiving', req.body.receipt_photo_id, 'foto nota / struk dari supplier');
     const extra = await extraPhotos(c, rid, 'receiving', req.body.extra_photo_ids);
@@ -285,7 +322,7 @@ async function refreshStatus(c: PoolClient, poId: number) {
 }
 
 // ---------- Tutup sisa PO (sisa dianggap tidak dikirim) ----------
-r.post('/po/:id/close', only('purchasing', 'central'), async (req, res) => {
+r.post('/po/:id/close', only('purchasing', 'manager', 'central', 'owner'), async (req, res) => {
   await tx(async (c) => {
     const p = await ownedPo(req, Number(req.params.id) || 0, c);
     if (p.status !== 'partial') throw bad('Tutup sisa hanya untuk PO yang diterima sebagian. PO yang belum ada barang datang bisa dibatalkan.');
@@ -300,7 +337,7 @@ r.post('/po/:id/close', only('purchasing', 'central'), async (req, res) => {
 });
 
 // ---------- Batalkan satu kedatangan (salah input) — Central Admin ----------
-r.post('/po/:id/receipts/:rid/reverse', only('central'), async (req, res) => {
+r.post('/po/:id/receipts/:rid/reverse', only(...ADMIN_ROLES), async (req, res) => {
   await tx(async (c) => {
     const p = await ownedPo(req, Number(req.params.id) || 0, c);
     const rc = await one(`SELECT * FROM po_receipts WHERE id = $1 AND purchase_order_id = $2 FOR UPDATE`, [Number(req.params.rid) || 0, p.id], c);
@@ -321,7 +358,7 @@ r.post('/po/:id/receipts/:rid/reverse', only('central'), async (req, res) => {
 });
 
 // ---------- Pelunasan hutang (K) — Central Admin ----------
-r.post('/po/:id/pay', only('central'), async (req, res) => {
+r.post('/po/:id/pay', only(...ADMIN_ROLES), async (req, res) => {
   const rid = restoId(req);
   await tx(async (c) => {
     const p = await ownedPo(req, Number(req.params.id) || 0, c);
@@ -338,7 +375,7 @@ r.post('/po/:id/pay', only('central'), async (req, res) => {
   });
   res.json({ ok: true });
 });
-r.delete('/po/:id/pay', only('central'), async (req, res) => {
+r.delete('/po/:id/pay', only(...ADMIN_ROLES), async (req, res) => {
   await tx(async (c) => {
     const p = await ownedPo(req, Number(req.params.id) || 0, c);
     if (!p.paid_date) throw bad('PO ini belum dilunasi');

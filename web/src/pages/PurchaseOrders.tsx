@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CheckCheck, Plus, Printer, Trash2, Truck, X } from 'lucide-react';
+import { Check, CheckCheck, Plus, Printer, Trash2, Truck, X } from 'lucide-react';
 import { api, qs } from '../api';
 import { useSession } from '../session';
 import { useApi, useAction } from '../ui/hooks';
@@ -7,8 +7,9 @@ import { Badge, Confirm, DocCard, DocGrid, Empty, Field, Input, Loading, Money, 
 import { ExtraPhotos, PhotoInput, PhotoStrip, type Photo } from '../ui/photo';
 import { date, dateTime, qty as fq, rp, todayStr } from '../format';
 
-type Status = '' | 'open' | 'partial' | 'received' | 'unset' | 'debt' | 'cancelled';
-const STATUS: Record<string, { label: string; tone: 'amber' | 'blue' | 'green' | 'red' }> = {
+type Status = '' | 'approval' | 'rejected' | 'open' | 'partial' | 'received' | 'unset' | 'debt' | 'cancelled' | 'mine';
+export const STATUS: Record<string, { label: string; tone: 'amber' | 'blue' | 'green' | 'red' }> = {
+  approval: { label: 'Menunggu persetujuan', tone: 'amber' }, rejected: { label: 'Ditolak', tone: 'red' },
   open: { label: 'Menunggu barang', tone: 'amber' }, partial: { label: 'Diterima sebagian', tone: 'blue' },
   received: { label: 'Selesai', tone: 'green' }, cancelled: { label: 'Dibatalkan', tone: 'red' },
 };
@@ -20,7 +21,8 @@ export function KT({ terms, locked }: { terms: string | null; locked?: boolean }
 }
 
 export default function PurchaseOrders() {
-  const [f, setF] = useState({ status: '' as Status, q: '', from: '', to: '', page: 1 });
+  const { canApprovePo } = useSession();
+  const [f, setF] = useState({ status: (canApprovePo ? 'approval' : '') as Status, q: '', from: '', to: '', page: 1 });
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v, page: k === 'page' ? v : 1 }));
   const { data, isLoading } = useApi<any>(`/po${qs(f)}`, { keepPrevious: true });
   const [open, setOpen] = useState<number | null>(null);
@@ -28,17 +30,20 @@ export default function PurchaseOrders() {
   const c = data?.counts ?? {};
   return (
     <>
-      <PageHead title="Purchase Order" sub="Pesan bahan ke supplier → barang datang (boleh sebagian, wajib foto barang & nota) → K/T ditentukan.">
+      <PageHead title="Purchase Order" sub="Pesan bahan ke supplier → disetujui Manager → barang datang (boleh sebagian, wajib foto barang & nota) → K/T ditentukan.">
         <button className="btn primary" onClick={() => setCreating(true)}><Plus size={15} /> Buat PO</button>
       </PageHead>
       <StageFilter value={f.status} onChange={(v) => set('status', v)} options={[
         { value: '', label: 'Semua' },
+        { value: 'approval', label: 'Menunggu persetujuan', tone: 'amber', count: c.approval },
         { value: 'open', label: 'Menunggu barang', tone: 'amber', count: c.open },
         { value: 'partial', label: 'Diterima sebagian', tone: 'blue', count: c.partial },
         { value: 'unset', label: 'K/T belum diatur', tone: 'amber', count: c.unset },
         { value: 'debt', label: 'Hutang belum lunas', tone: 'red', count: c.debt },
         { value: 'received', label: 'Selesai', tone: 'green' },
+        { value: 'rejected', label: 'Ditolak', tone: 'red' },
         { value: 'cancelled', label: 'Dibatalkan', tone: 'red' },
+        { value: 'mine', label: 'Buatan saya' },
       ]} />
       <div className="toolbar">
         <SearchBox value={f.q} onChange={(v) => set('q', v)} placeholder="Cari nomor PO / supplier…" />
@@ -58,7 +63,7 @@ export default function PurchaseOrders() {
                 status={<span className="row" style={{ gap: 6 }}><KT terms={p.payment_terms} locked={p.terms_by_central} /><Badge tone={STATUS[p.status]?.tone}>{STATUS[p.status]?.label}</Badge></span>}
                 title={p.supplier_name}
                 meta={[`${p.line_count} bahan`, date(p.created_at), p.expected_date ? `kirim ${date(p.expected_date)}` : '', p.created_by_name]}
-                progress={p.status === 'cancelled' ? null : p.received_pct}
+                progress={['cancelled', 'rejected', 'approval'].includes(p.status) ? null : p.received_pct}
                 note={Number(p.debt) > 0 && !p.paid_date ? <span className="down">Hutang {rp(p.debt)}</span> : p.paid_date ? <span className="up">Hutang lunas {date(p.paid_date)}</span> : undefined}
                 total={rp(p.total)} />
             ))}
@@ -78,6 +83,7 @@ let seq = 1;
 const newLine = (): Line => ({ key: seq++, item_id: '', supplier_id: '', qty: '', unit_cost: '' });
 
 function CreatePo({ onClose, onCreated }: { onClose: () => void; onCreated: (ids: number[]) => void }) {
+  const { role } = useSession();
   const { data: opt } = useApi<any>('/master/options');
   const [lines, setLines] = useState<Line[]>([newLine()]);
   const [notes, setNotes] = useState('');
@@ -101,7 +107,7 @@ function CreatePo({ onClose, onCreated }: { onClose: () => void; onCreated: (ids
     notes, expected_date: expected || null,
     lines: filled.map((l) => ({ item_id: Number(l.item_id), supplier_id: Number(l.supplier_id), qty: l.qty, unit_cost: l.unit_cost })),
   }), {
-    success: (r: any) => `PO dibuat: ${r.purchase_orders.map((p: any) => p.number).join(', ')}`, invalidate: ['/po', '/summary'],
+    success: (r: any) => `PO dibuat: ${r.purchase_orders.map((p: any) => p.number).join(', ')}${role === 'purchasing' ? ' — menunggu persetujuan Manager' : ''}`, invalidate: ['/po', '/summary'],
     onDone: (r: any) => onCreated(r.purchase_orders.map((p: any) => p.id)),
   });
   const noItems = opt && !opt.items.length;
@@ -150,6 +156,7 @@ function CreatePo({ onClose, onCreated }: { onClose: () => void; onCreated: (ids
               </tbody><tfoot><tr><td>Total</td><td className="num">{rp([...groups.values()].reduce((a, b) => a + b, 0))}</td></tr></tfoot></table></div>
             </div>
           )}
+          {role === 'purchasing' && <div className="notice"><span>PO ini perlu <b>persetujuan Manager</b> sebelum barang bisa diterima.</span></div>}
           <div className="notice info">K/T (kredit / tunai) ditetapkan Central Admin. Bila belum diatur, dipilih saat barang pertama datang.</div>
         </div>
       )}
@@ -159,10 +166,10 @@ function CreatePo({ onClose, onCreated }: { onClose: () => void; onCreated: (ids
 
 // ---------- Detail PO ----------
 function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
-  const { isCentral, user } = useSession();
+  const { isAdmin, canApprovePo, role, user } = useSession();
   const { data: p, isLoading } = useApi<any>(`/po/${id}`);
   const [receiving, setReceiving] = useState(false);
-  const [dialog, setDialog] = useState<null | 'cancel' | 'close' | 'unpay' | { reverse: any }>(null);
+  const [dialog, setDialog] = useState<null | 'cancel' | 'close' | 'unpay' | 'reject' | { reverse: any }>(null);
   const [note, setNote] = useState('');
   const inv = ['/po', '/summary', '/journal', '/logs'];
   const act = useAction(({ url, body, method }: { url: string; body?: any; method?: 'del' }) => (method === 'del' ? api.del(url) : api.post(url, body)),
@@ -171,7 +178,8 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
   const st = STATUS[p.status];
   const canReceive = ['open', 'partial'].includes(p.status);
   const total = p.lines.reduce((s: number, l: any) => s + Number(l.qty) * Number(l.unit_cost), 0);
-  const canCancel = p.status === 'open' && (isCentral || p.created_by === user.id);
+  const canCancel = ['approval', 'open'].includes(p.status) && (role !== 'purchasing' || p.created_by === user.id);
+  const canDecide = p.status === 'approval' && canApprovePo;
   return (
     <Sheet title={p.number} sub={<>{p.supplier_name} · dibuat {dateTime(p.created_at)} oleh {p.created_by_name ?? '—'}</>} onClose={onClose} wide
       footer={<>
@@ -179,6 +187,8 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
         <span className="spacer" />
         {canCancel && <button className="btn danger" onClick={() => setDialog('cancel')}><X size={15} /> Batalkan PO</button>}
         {p.status === 'partial' && <button className="btn" onClick={() => setDialog('close')}><CheckCheck size={15} /> Tutup sisa PO</button>}
+        {canDecide && <button className="btn danger" onClick={() => setDialog('reject')}><X size={15} /> Tolak</button>}
+        {canDecide && <button className="btn primary" disabled={act.isPending} onClick={() => act.mutate({ url: `/po/${p.id}/approve` })}><Check size={15} /> Setujui PO</button>}
         {canReceive && <button className="btn primary" onClick={() => setReceiving(true)}><Truck size={15} /> Terima barang</button>}
       </>}>
       <div className="stack">
@@ -189,6 +199,9 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
           {p.expected_date && <span className="tag">Kirim {date(p.expected_date)}</span>}
           {p.due_date && <span className="tag">Jatuh tempo {date(p.due_date)}</span>}
         </div>
+        {p.status === 'approval' && <div className="notice">Menunggu persetujuan Manager / Owner. Barang belum bisa diterima.</div>}
+        {p.status === 'rejected' && <div className="notice" style={{ background: 'var(--red-soft)', color: 'var(--red)' }}>Ditolak {p.approved_by_name} {dateTime(p.approved_at)}: {p.reject_note}</div>}
+        {p.approved_at && p.status !== 'rejected' && p.approved_by !== p.created_by && <div className="muted" style={{ fontSize: 13 }}>Disetujui {p.approved_by_name} · {dateTime(p.approved_at)}</div>}
         {p.notes && <div className="notice info">{p.notes}</div>}
         {p.close_note && <div className="notice">{p.status === 'cancelled' ? 'Dibatalkan' : 'Sisa ditutup'} oleh {p.closed_by_name}: {p.close_note}</div>}
 
@@ -215,7 +228,7 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
           </div>
         </div>
 
-        {isCentral && p.status !== 'cancelled' && <TermsPanel p={p} />}
+        {isAdmin && !['cancelled', 'rejected'].includes(p.status) && <TermsPanel p={p} />}
 
         <div className="section-title">Kedatangan barang ({p.receipts.length})</div>
         {!p.receipts.length && <div className="muted" style={{ fontSize: 13 }}>Belum ada barang datang.</div>}
@@ -227,7 +240,7 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
               <span className="spacer" />
               {rc.reversed_at ? <Badge tone="red">Dibatalkan</Badge> : rc.paid ? <Badge tone="green">T · lunas {rc.pay_account_name}</Badge> : <Badge tone="blue">K · hutang</Badge>}
               <b className="tnum">{rp(rc.value)}</b>
-              {isCentral && !rc.reversed_at && <button className="btn sm ghost danger" onClick={() => setDialog({ reverse: rc })}>Batalkan</button>}
+              {isAdmin && !rc.reversed_at && <button className="btn sm ghost danger" onClick={() => setDialog({ reverse: rc })}>Batalkan</button>}
             </div>
             <div className="arrival-body">
               <div className="arrival-items">
@@ -264,6 +277,8 @@ function PoDetail({ id, onClose }: { id: number; onClose: () => void }) {
       {receiving && <ReceiveSheet p={p} onClose={() => setReceiving(false)} />}
       {dialog === 'cancel' && <NoteDialog title="Batalkan PO?" text="PO dibatalkan sebelum barang datang. Isi alasannya." confirm="Batalkan PO" note={note} setNote={setNote} busy={act.isPending}
         onConfirm={() => act.mutate({ url: `/po/${p.id}/cancel`, body: { note } })} onClose={() => setDialog(null)} />}
+      {dialog === 'reject' && <NoteDialog title={`Tolak ${p.number}?`} text="PO ditolak dan tidak bisa diproses lagi. Pembuat PO melihat alasannya." confirm="Tolak PO" note={note} setNote={setNote} busy={act.isPending}
+        onConfirm={() => act.mutate({ url: `/po/${p.id}/reject`, body: { note } })} onClose={() => setDialog(null)} />}
       {dialog === 'close' && <NoteDialog title="Tutup sisa PO?" text="Sisa barang yang belum datang dianggap tidak dikirim dan PO selesai." confirm="Tutup sisa" note={note} setNote={setNote} busy={act.isPending}
         onConfirm={() => act.mutate({ url: `/po/${p.id}/close`, body: { note } })} onClose={() => setDialog(null)} />}
       {dialog && typeof dialog === 'object' && <NoteDialog title={`Batalkan kedatangan ${dialog.reverse.number}?`} text="Jumlah diterima PO dikurangi dan kedatangan ini keluar dari jurnal umum." confirm="Batalkan kedatangan"
@@ -297,7 +312,7 @@ function TermsPanel({ p }: { p: any }) {
   const dirty = terms !== (p.payment_terms ?? '') || !p.terms_by_central || due !== (p.due_date ?? '');
   return (
     <div className="panel">
-      <div className="panel-head"><h3>Pembayaran (Central Admin)</h3></div>
+      <div className="panel-head"><h3>Pembayaran (Central Admin / Owner)</h3></div>
       <div className="panel-body stack">
         <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end' }}>
           <Field label="K/T"><Seg value={terms} onChange={setTerms} options={[{ value: 'credit', label: 'K — Kredit / hutang' }, { value: 'cash', label: 'T — Tunai' }]} /></Field>

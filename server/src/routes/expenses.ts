@@ -1,14 +1,14 @@
 import { Router, type Request } from 'express';
 import { one, q, tx } from '../lib/db.ts';
 import { bad, notFound, num } from '../lib/http.ts';
-import { only, restoId } from '../lib/auth.ts';
+import { ADMIN_ROLES, RESTO_ROLES, only, restoId } from '../lib/auth.ts';
 import { log } from '../lib/audit.ts';
 import { nextNumber } from '../lib/numbers.ts';
 import { extraPhotos, requirePhoto } from '../lib/uploads.ts';
 
 // Belanja harian (HPP) & belanja karyawan (beban): dari daftar bahan Central Admin, tanpa supplier terdaftar
 // (boleh mencatat nama toko), tidak masuk persediaan, selalu tunai (PTH), wajib foto nota. Tanpa approval:
-// langsung tercatat di jurnal umum. Central Admin bisa membatalkan (salah input) dengan alasan.
+// langsung tercatat di jurnal umum. Central Admin / Owner bisa membatalkan (salah input) dengan alasan.
 const r = Router();
 
 const KIND_LABEL = { daily: 'belanja harian', employee: 'belanja karyawan' } as const;
@@ -54,7 +54,7 @@ r.get('/expenses/:id', async (req, res) => {
   res.json({ ...x, lines, logs });
 });
 
-r.post('/expenses', only('purchasing', 'central'), async (req, res) => {
+r.post('/expenses', only(...RESTO_ROLES), async (req, res) => {
   const rid = restoId(req);
   const kind = kindOf(req.body.kind);
   if (!kind) throw bad('Jenis belanja tidak valid');
@@ -95,7 +95,7 @@ r.post('/expenses', only('purchasing', 'central'), async (req, res) => {
 });
 
 // Batalkan (salah input): tidak masuk jurnal lagi — Central Admin
-r.post('/expenses/:id/void', only('central'), async (req, res) => {
+r.post('/expenses/:id/void', only(...ADMIN_ROLES), async (req, res) => {
   await tx(async (c) => {
     const x = await one(`SELECT * FROM expenses WHERE id = $1 AND resto_id = $2 FOR UPDATE`, [Number(req.params.id) || 0, restoId(req)], c);
     if (!x) throw notFound('Belanja');

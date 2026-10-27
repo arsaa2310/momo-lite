@@ -6,18 +6,18 @@ import { useToast } from '../ui/toast';
 import { Badge, Confirm, Empty, Field, Input, Loading, Money, PageHead, SearchBox, Seg, Select, Sheet, Tabs, ThousandHint } from '../ui/kit';
 import { date, qty as fq, rp } from '../format';
 
-type Tab = 'items' | 'suppliers' | 'prices' | 'expense' | 'accounts';
+type Tab = 'items' | 'suppliers' | 'prices' | 'expense' | 'accounts' | 'methods';
 const TABS: { value: Tab; label: string }[] = [
   { value: 'items', label: 'Bahan PO' }, { value: 'suppliers', label: 'Supplier' }, { value: 'prices', label: 'Harga Supplier' },
-  { value: 'expense', label: 'Bahan Belanja' }, { value: 'accounts', label: 'Rekening' },
+  { value: 'expense', label: 'Bahan Belanja' }, { value: 'accounts', label: 'Rekening' }, { value: 'methods', label: 'Metode Pendapatan' },
 ];
-const ADD_LABEL: Record<Tab, string> = { items: 'Tambah bahan PO', suppliers: 'Tambah supplier', prices: 'Tambah harga supplier', expense: 'Tambah bahan belanja', accounts: 'Tambah rekening' };
+const ADD_LABEL: Record<Tab, string> = { items: 'Tambah bahan PO', suppliers: 'Tambah supplier', prices: 'Tambah harga supplier', expense: 'Tambah bahan belanja', accounts: 'Tambah rekening', methods: 'Tambah metode' };
 const UNITS = ['kg', 'gram', 'liter', 'ml', 'pcs', 'pack', 'dus', 'karung', 'ikat', 'butir', 'botol', 'kaleng', 'sachet', 'paket'];
 const EXPENSE_DEFAULT = {
   daily: { category: '2.1 Biaya Bahan Baku Produksi', sub_category: 'Bahan Harian' },
   employee: { category: '3.6 Biaya Natura', sub_category: 'Masak Karyawan' },
 };
-const INVALIDATE = ['/master', '/logs', '/summary'];
+const INVALIDATE = ['/master', '/logs', '/summary', '/revenue', '/journal'];
 
 // Central Admin mengisi master data: satu per satu lewat form, atau banyak sekaligus lewat template Excel.
 export default function Master() {
@@ -31,7 +31,7 @@ export default function Master() {
   const edit = (row: any) => setForm({ tab, row });
   return (
     <>
-      <PageHead title="Master Data" sub="Bahan PO, supplier & harganya, bahan belanja harian/karyawan, dan rekening — isi satu per satu lewat form, atau sekaligus lewat Excel.">
+      <PageHead title="Master Data" sub="Bahan PO, supplier & harganya, bahan belanja harian/karyawan, rekening, dan metode pendapatan — isi satu per satu lewat form, atau sekaligus lewat Excel.">
         <button className="btn" onClick={() => dl(true)}><Download size={15} /> Unduh data (Excel)</button>
         <button className="btn" onClick={() => setImporting(true)}><Upload size={15} /> Impor Excel</button>
         <button className="btn primary" onClick={() => setForm({ tab, row: null })}><Plus size={15} /> {ADD_LABEL[tab]}</button>
@@ -54,12 +54,14 @@ export default function Master() {
       {tab === 'prices' && <PricesTab onEdit={edit} />}
       {tab === 'expense' && <ExpenseTab onEdit={edit} />}
       {tab === 'accounts' && <AccountsTab onEdit={edit} />}
+      {tab === 'methods' && <MethodsTab onEdit={edit} />}
       {importing && <ImportSheet onClose={() => setImporting(false)} />}
       {form?.tab === 'items' && <ItemForm id={form.row?.id ?? null} onClose={() => setForm(null)} />}
       {form?.tab === 'suppliers' && <SupplierForm id={form.row?.id ?? null} onClose={() => setForm(null)} />}
       {form?.tab === 'prices' && <PriceForm row={form.row} onClose={() => setForm(null)} />}
       {form?.tab === 'expense' && <ExpenseForm row={form.row} onClose={() => setForm(null)} />}
       {form?.tab === 'accounts' && <AccountForm row={form.row} onClose={() => setForm(null)} />}
+      {form?.tab === 'methods' && <MethodForm row={form.row} onClose={() => setForm(null)} />}
     </>
   );
 }
@@ -185,6 +187,24 @@ function AccountsTab({ onEdit }: TabProps) {
       head={<tr><th>Kas / rekening</th><th /></tr>}>
       {f.list.map((r) => (
         <tr key={r.id} className="click" onClick={() => onEdit(r)}><td><b>{r.name}</b></td><td className="right x"><RowActions url={`/master/accounts/${r.id}`} label={r.name} onEdit={() => onEdit(r)} /></td></tr>
+      ))}
+    </Table>
+  );
+}
+
+// Metode bayar di laporan pendapatan shift & kas / rekening tempat uangnya masuk (kolom Rekening baris PNDPTN)
+function MethodsTab({ onEdit }: TabProps) {
+  const { data, isLoading } = useApi<any[]>('/master/revenue-methods');
+  const f = useFilter(data, (r) => r.name);
+  if (isLoading) return <Loading />;
+  return (
+    <Table count={f.list.length} empty={!f.list.length} search={<SearchBox value={f.q} onChange={f.setQ} placeholder="Cari metode…" />}
+      head={<tr><th>Metode bayar</th><th>Uang masuk ke</th><th className="num">Urutan</th><th /></tr>}>
+      {f.list.map((r) => (
+        <tr key={r.id} className="click" onClick={() => onEdit(r)}>
+          <td><b>{r.name}</b></td><td data-label="Masuk ke">{r.pay_account_name ?? <span className="muted">—</span>}</td><td className="num" data-label="Urutan">{r.sort}</td>
+          <td className="right x"><RowActions url={`/master/revenue-methods/${r.id}`} label={r.name} onEdit={() => onEdit(r)} /></td>
+        </tr>
       ))}
     </Table>
   );
@@ -352,6 +372,22 @@ function AccountForm({ row, onClose }: { row: any; onClose: () => void }) {
   return (
     <FormSheet title={row ? 'Ubah rekening' : 'Tambah rekening'} sub="Kas / rekening untuk pembayaran (kolom Rekening di jurnal umum)" onClose={onClose} onSave={() => save.mutate(undefined)} saving={save.isPending}>
       <Field label="Nama kas / rekening *"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. BCA 1234567890 a.n. Resto" autoFocus /></Field>
+    </FormSheet>
+  );
+}
+
+function MethodForm({ row, onClose }: { row: any; onClose: () => void }) {
+  const { data: accounts } = useApi<any[]>('/master/accounts');
+  const [f, setF] = useState({ name: row?.name ?? '', pay_account_id: row?.pay_account_id ? String(row.pay_account_id) : '', sort: row?.sort != null ? String(row.sort) : '' });
+  const save = useAction(() => (row ? api.put(`/master/revenue-methods/${row.id}`, f) : api.post('/master/revenue-methods', f)),
+    { success: row ? 'Metode disimpan' : 'Metode ditambahkan', invalidate: INVALIDATE, onDone: onClose });
+  return (
+    <FormSheet title={row ? 'Ubah metode pendapatan' : 'Tambah metode pendapatan'} sub="Diisi Manager di laporan pendapatan setiap shift" onClose={onClose} onSave={() => save.mutate(undefined)} saving={save.isPending}>
+      <Field label="Nama metode *"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="mis. QRIS, GoFood, ShopeeFood" autoFocus /></Field>
+      <Field label="Uang masuk ke (opsional)" hint="Kolom Rekening di jurnal umum">
+        <Select value={f.pay_account_id} onChange={(e) => setF({ ...f, pay_account_id: e.target.value })} placeholder="— Kas / rekening —" options={(accounts ?? []).map((a) => ({ value: a.id, label: a.name }))} />
+      </Field>
+      <Field label="Urutan di form (opsional)"><Input inputMode="numeric" value={f.sort} onChange={(e) => setF({ ...f, sort: e.target.value.replace(/\D/g, '') })} placeholder="1, 2, 3, …" /></Field>
     </FormSheet>
   );
 }

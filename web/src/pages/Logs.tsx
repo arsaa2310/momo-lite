@@ -4,14 +4,18 @@ import { useApi } from '../ui/hooks';
 import { Badge, Empty, Field, Input, Loading, PageHead, Pager, SearchBox, Select } from '../ui/kit';
 import { dateTime } from '../format';
 
-const ROLE_LABEL: Record<string, string> = { superadmin: 'Super Admin', central: 'Central Admin', purchasing: 'Purchasing' };
+const ROLE_LABEL: Record<string, string> = { superadmin: 'Super Admin', owner: 'Owner', central: 'Central Admin', manager: 'Manager', purchasing: 'Purchasing' };
 const ACTIONS: Record<string, string> = {
   login: 'Masuk', create: 'Buat', update: 'Ubah', delete: 'Hapus', import: 'Impor Excel', export: 'Unduh', receive: 'Terima barang',
-  terms: 'K/T', close: 'Tutup sisa', cancel: 'Batal PO', reverse: 'Batal kedatangan', pay: 'Pelunasan', void: 'Batal belanja',
+  terms: 'K/T', close: 'Tutup sisa', cancel: 'Batal / tarik', reverse: 'Batal kedatangan', pay: 'Pelunasan', void: 'Batal dokumen',
+  approve: 'Setujui', reject: 'Tolak', verify: 'Cek pendapatan',
 };
-const TONE: Record<string, 'green' | 'red' | 'amber' | 'blue' | 'accent'> = { receive: 'green', create: 'blue', terms: 'accent', pay: 'green', delete: 'red', cancel: 'red', void: 'red', reverse: 'red', import: 'amber' };
+const TONE: Record<string, 'green' | 'red' | 'amber' | 'blue' | 'accent'> = {
+  receive: 'green', create: 'blue', terms: 'accent', pay: 'green', delete: 'red', cancel: 'red', void: 'red', reverse: 'red', import: 'amber',
+  approve: 'green', reject: 'red', verify: 'accent',
+};
 
-// Super Admin: semua resto (filter resto). Central Admin: resto sendiri.
+// Super Admin: semua resto (filter resto). Central Admin / Owner: resto yang sedang dibuka.
 export default function Logs({ admin }: { admin?: boolean }) {
   const [f, setF] = useState({ resto_id: '', role: '', action: '', from: '', to: '', q: '', page: 1 });
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v, page: k === 'page' ? v : 1 }));

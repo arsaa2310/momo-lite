@@ -30,7 +30,7 @@ export async function compressImage(file: File, maxSide = 1600, quality = 0.86):
   }
 }
 
-export type Kind = 'receiving' | 'expense' | 'payment';
+export type Kind = 'receiving' | 'expense' | 'payment' | 'revenue';
 export type Photo = { id: number; url: string };
 
 export async function uploadImage(file: File, kind: Kind) {
@@ -80,7 +80,7 @@ export function PhotoInput({ label, value, onChange, kind }: { label: string; va
 }
 
 // Foto tambahan (opsional, maks. 6)
-export function ExtraPhotos({ value, onChange, kind, max = 6 }: { value: Photo[]; onChange: (v: Photo[]) => void; kind: Kind; max?: number }) {
+export function ExtraPhotos({ value, onChange, kind, max = 6, label = 'Foto tambahan (opsional)' }: { value: Photo[]; onChange: (v: Photo[]) => void; kind: Kind; max?: number; label?: string }) {
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -104,7 +104,7 @@ export function ExtraPhotos({ value, onChange, kind, max = 6 }: { value: Photo[]
   };
   return (
     <div className="photo-input">
-      <div className="photo-label">Foto tambahan (opsional)</div>
+      <div className="photo-label">{label}</div>
       <div className="photo-strip">
         {value.map((p) => (
           <div key={p.id} className="photo-thumb">

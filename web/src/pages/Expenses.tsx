@@ -135,7 +135,7 @@ function CreateExpense({ kind, onClose }: { kind: Kind; onClose: () => void }) {
 }
 
 function ExpenseDetail({ id, onClose }: { id: number; onClose: () => void }) {
-  const { isCentral } = useSession();
+  const { isAdmin } = useSession();
   const { data: x } = useApi<any>(`/expenses/${id}`);
   const [voiding, setVoiding] = useState(false);
   const [note, setNote] = useState('');
@@ -143,7 +143,7 @@ function ExpenseDetail({ id, onClose }: { id: number; onClose: () => void }) {
   if (!x) return <Sheet title="Belanja" onClose={onClose}><Loading /></Sheet>;
   return (
     <Sheet title={x.number} sub={<>{date(x.expense_date)} · dicatat {x.created_by_name} {dateTime(x.created_at)}</>} onClose={onClose} wide
-      footer={isCentral && !x.voided_at ? <><span className="spacer" /><button className="btn danger" onClick={() => setVoiding(true)}><X size={15} /> Batalkan belanja</button></> : undefined}>
+      footer={isAdmin && !x.voided_at ? <><span className="spacer" /><button className="btn danger" onClick={() => setVoiding(true)}><X size={15} /> Batalkan belanja</button></> : undefined}>
       <div className="stack">
         {x.voided_at && <div className="notice" style={{ background: 'var(--red-soft)', color: 'var(--red)' }}>Dibatalkan {x.voided_by_name} {dateTime(x.voided_at)}: {x.void_note}</div>}
         <dl className="kv" style={{ margin: 0 }}>

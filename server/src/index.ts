@@ -1,6 +1,6 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import { requireAuth, only } from './lib/auth.ts';
+import { RESTO_ROLES, requireAuth, only } from './lib/auth.ts';
 import { errorHandler } from './lib/http.ts';
 import auth from './routes/auth.ts';
 import admin from './routes/admin.ts';
@@ -10,6 +10,9 @@ import expenses from './routes/expenses.ts';
 import journal from './routes/journal.ts';
 import uploads from './routes/uploads.ts';
 import summary from './routes/summary.ts';
+import revenue from './routes/revenue.ts';
+import other from './routes/other.ts';
+import owner from './routes/owner.ts';
 
 const app = express();
 app.disable('x-powered-by');
@@ -24,8 +27,9 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', auth);
 app.use('/api', requireAuth);
 app.use('/api/admin', admin);
-// menu resto: Central Admin & Purchasing
-app.use('/api', only('central', 'purchasing'), master, po, expenses, journal, uploads, summary);
+app.use('/api/owner', owner);
+// menu resto: Owner, Central Admin, Manager, Purchasing (hak per menu diatur di masing-masing rute)
+app.use('/api', only(...RESTO_ROLES), master, po, expenses, other, revenue, journal, uploads, summary);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Tidak ditemukan' }));
 app.use(errorHandler);
 

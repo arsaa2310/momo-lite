@@ -3,11 +3,11 @@ import type { PoolClient } from 'pg';
 import ExcelJS from 'exceljs';
 import { one, q, tx } from '../lib/db.ts';
 import { HttpError, bad, notFound } from '../lib/http.ts';
-import { only, restoId } from '../lib/auth.ts';
+import { ADMIN_ROLES, only, restoId } from '../lib/auth.ts';
 import { log } from '../lib/audit.ts';
 import { addTableSheet, loadWorkbook, parseNumber, readSheet, sendWorkbook, type Col } from '../lib/excel.ts';
 
-// Master data resto diisi Central Admin lewat template Excel (unduh template → isi → impor).
+// Master data resto diisi Central Admin / Owner lewat template Excel (unduh template → isi → impor).
 // Impor = tambah / perbarui berdasarkan nama (tidak membedakan huruf besar-kecil); baris yang tidak ada di file tidak dihapus.
 // Menghapus dilakukan per baris di halaman Master Data.
 const r = Router();
@@ -52,10 +52,14 @@ const SHEETS = {
   ] as Col[] },
 };
 
-// ---------- Data untuk form (Central Admin & Purchasing) ----------
+// Kategori bawaan pengeluaran lain (saran di form; boleh diketik bebas)
+export const OTHER_CATEGORIES = ['Beban Listrik', 'Beban Air', 'Beban Gas', 'Beban Internet & Telepon', 'Beban Sewa', 'Beban Perbaikan & Pemeliharaan',
+  'Beban Kebersihan', 'Beban Transportasi', 'Beban Pemasaran', 'Beban Perlengkapan', 'Beban Administrasi & Pajak', 'Beban Lain-lain'];
+
+// ---------- Data untuk form (semua pengguna resto) ----------
 r.get('/master/options', async (req, res) => {
   const rid = restoId(req);
-  const [items, suppliers, expenseItems, accounts] = await Promise.all([
+  const [items, suppliers, expenseItems, accounts, methods, resto, usedCats] = await Promise.all([
     q(`SELECT i.id, i.name, i.unit, i.category, i.sub_category,
               COALESCE((SELECT json_agg(json_build_object('supplier_id', s.id, 'name', s.name, 'price', si.price) ORDER BY si.price NULLS LAST, s.name)
                           FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id AND s.deleted_at IS NULL WHERE si.item_id = i.id), '[]') AS suppliers
@@ -63,33 +67,45 @@ r.get('/master/options', async (req, res) => {
     q(`SELECT id, name, default_terms, phone FROM suppliers WHERE resto_id = $1 AND deleted_at IS NULL ORDER BY name`, [rid]),
     q(`SELECT id, kind, name, unit, default_price, category, sub_category FROM expense_items WHERE resto_id = $1 AND deleted_at IS NULL ORDER BY name`, [rid]),
     q(`SELECT id, name FROM pay_accounts WHERE resto_id = $1 AND deleted_at IS NULL ORDER BY id`, [rid]),
+    q(`SELECT m.id, m.name, m.pay_account_id, pa.name AS pay_account_name FROM revenue_methods m LEFT JOIN pay_accounts pa ON pa.id = m.pay_account_id
+        WHERE m.resto_id = $1 AND m.deleted_at IS NULL ORDER BY m.sort, m.id`, [rid]),
+    one(`SELECT shift_names FROM restos WHERE id = $1`, [rid]),
+    q(`SELECT DISTINCT l.category FROM other_expense_lines l JOIN other_expenses x ON x.id = l.expense_id WHERE x.resto_id = $1`, [rid]),
   ]);
-  res.json({ items, suppliers, expense_items: expenseItems, accounts });
+  res.json({
+    items, suppliers, expense_items: expenseItems, accounts, revenue_methods: methods, shifts: resto?.shift_names ?? ['Harian'],
+    other_categories: [...new Set([...OTHER_CATEGORIES, ...usedCats.map((x) => x.category)])].sort(),
+  });
 });
 
 // ---------- Daftar master (Central Admin) ----------
-r.get('/master/items', only('central'), async (req, res) => {
+r.get('/master/items', only(...ADMIN_ROLES), async (req, res) => {
   res.json(await q(
     `SELECT i.*, (SELECT count(*)::int FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id AND s.deleted_at IS NULL WHERE si.item_id = i.id) AS supplier_count,
             (SELECT min(si.price) FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id AND s.deleted_at IS NULL WHERE si.item_id = i.id) AS min_price
        FROM items i WHERE i.resto_id = $1 AND i.deleted_at IS NULL ORDER BY i.name`, [restoId(req)]));
 });
-r.get('/master/suppliers', only('central'), async (req, res) => {
+r.get('/master/suppliers', only(...ADMIN_ROLES), async (req, res) => {
   res.json(await q(
     `SELECT s.*, (SELECT count(*)::int FROM supplier_items si JOIN items i ON i.id = si.item_id AND i.deleted_at IS NULL WHERE si.supplier_id = s.id) AS item_count
        FROM suppliers s WHERE s.resto_id = $1 AND s.deleted_at IS NULL ORDER BY s.name`, [restoId(req)]));
 });
-r.get('/master/prices', only('central'), async (req, res) => {
+r.get('/master/prices', only(...ADMIN_ROLES), async (req, res) => {
   res.json(await q(
     `SELECT si.supplier_id, si.item_id, si.price, si.updated_at, s.name AS supplier_name, i.name AS item_name, i.unit
        FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id AND s.deleted_at IS NULL JOIN items i ON i.id = si.item_id AND i.deleted_at IS NULL
       WHERE s.resto_id = $1 ORDER BY s.name, i.name`, [restoId(req)]));
 });
-r.get('/master/expense-items', only('central'), async (req, res) => {
+r.get('/master/expense-items', only(...ADMIN_ROLES), async (req, res) => {
   res.json(await q(`SELECT * FROM expense_items WHERE resto_id = $1 AND deleted_at IS NULL ORDER BY kind, name`, [restoId(req)]));
 });
-r.get('/master/accounts', only('central'), async (req, res) => {
+r.get('/master/accounts', only(...ADMIN_ROLES), async (req, res) => {
   res.json(await q(`SELECT * FROM pay_accounts WHERE resto_id = $1 AND deleted_at IS NULL ORDER BY id`, [restoId(req)]));
+});
+r.get('/master/revenue-methods', only(...ADMIN_ROLES), async (req, res) => {
+  res.json(await q(
+    `SELECT m.*, pa.name AS pay_account_name FROM revenue_methods m LEFT JOIN pay_accounts pa ON pa.id = m.pay_account_id
+      WHERE m.resto_id = $1 AND m.deleted_at IS NULL ORDER BY m.sort, m.id`, [restoId(req)]));
 });
 
 const TABLES: Record<string, { table: string; label: string }> = {
@@ -97,8 +113,9 @@ const TABLES: Record<string, { table: string; label: string }> = {
   suppliers: { table: 'suppliers', label: 'supplier' },
   'expense-items': { table: 'expense_items', label: 'bahan belanja' },
   accounts: { table: 'pay_accounts', label: 'rekening' },
+  'revenue-methods': { table: 'revenue_methods', label: 'metode pendapatan' },
 };
-r.delete('/master/:kind/:id', only('central'), async (req, res) => {
+r.delete('/master/:kind/:id', only(...ADMIN_ROLES), async (req, res) => {
   const rid = restoId(req);
   const t = TABLES[String(req.params.kind)];
   if (!t) throw notFound('Data');
@@ -107,7 +124,7 @@ r.delete('/master/:kind/:id', only('central'), async (req, res) => {
   await log(req, { action: 'delete', entity: 'master', entityId: Number(req.params.id), detail: `Menghapus ${t.label} ${row.name}` });
   res.status(204).end();
 });
-r.delete('/master/prices/:supplierId/:itemId', only('central'), async (req, res) => {
+r.delete('/master/prices/:supplierId/:itemId', only(...ADMIN_ROLES), async (req, res) => {
   const row = await one(
     `DELETE FROM supplier_items si USING suppliers s, items i WHERE si.supplier_id = $1 AND si.item_id = $2 AND s.id = si.supplier_id AND i.id = si.item_id AND s.resto_id = $3
      RETURNING s.name AS supplier, i.name AS item`, [Number(req.params.supplierId) || 0, Number(req.params.itemId) || 0, restoId(req)]);
@@ -133,7 +150,7 @@ async function assertUniqueName(c: PoolClient, table: string, rid: number, name:
 }
 
 // Detail untuk form ubah: bahan + supplier yang menyediakannya / supplier + bahannya
-r.get('/master/items/:id', only('central'), async (req, res) => {
+r.get('/master/items/:id', only(...ADMIN_ROLES), async (req, res) => {
   const it = await one(`SELECT * FROM items WHERE id = $1 AND resto_id = $2 AND deleted_at IS NULL`, [Number(req.params.id) || 0, restoId(req)]);
   if (!it) throw notFound('Bahan');
   const prices = await q(`SELECT si.supplier_id, si.price, s.name AS supplier_name FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id AND s.deleted_at IS NULL
@@ -141,7 +158,7 @@ r.get('/master/items/:id', only('central'), async (req, res) => {
   const used = !!(await one(`SELECT 1 AS x FROM purchase_order_lines WHERE item_id = $1 LIMIT 1`, [it.id]));
   res.json({ ...it, prices, used });
 });
-r.get('/master/suppliers/:id', only('central'), async (req, res) => {
+r.get('/master/suppliers/:id', only(...ADMIN_ROLES), async (req, res) => {
   const s = await one(`SELECT * FROM suppliers WHERE id = $1 AND resto_id = $2 AND deleted_at IS NULL`, [Number(req.params.id) || 0, restoId(req)]);
   if (!s) throw notFound('Supplier');
   const prices = await q(`SELECT si.item_id, si.price, i.name AS item_name, i.unit FROM supplier_items si JOIN items i ON i.id = si.item_id AND i.deleted_at IS NULL
@@ -191,8 +208,8 @@ async function saveItem(req: Request, id: number | null) {
     return row;
   });
 }
-r.post('/master/items', only('central'), async (req, res) => res.status(201).json(await saveItem(req, null)));
-r.put('/master/items/:id', only('central'), async (req, res) => res.json(await saveItem(req, Number(req.params.id) || 0)));
+r.post('/master/items', only(...ADMIN_ROLES), async (req, res) => res.status(201).json(await saveItem(req, null)));
+r.put('/master/items/:id', only(...ADMIN_ROLES), async (req, res) => res.json(await saveItem(req, Number(req.params.id) || 0)));
 
 async function saveSupplier(req: Request, id: number | null) {
   const rid = restoId(req);
@@ -212,11 +229,11 @@ async function saveSupplier(req: Request, id: number | null) {
     return row;
   });
 }
-r.post('/master/suppliers', only('central'), async (req, res) => res.status(201).json(await saveSupplier(req, null)));
-r.put('/master/suppliers/:id', only('central'), async (req, res) => res.json(await saveSupplier(req, Number(req.params.id) || 0)));
+r.post('/master/suppliers', only(...ADMIN_ROLES), async (req, res) => res.status(201).json(await saveSupplier(req, null)));
+r.put('/master/suppliers/:id', only(...ADMIN_ROLES), async (req, res) => res.json(await saveSupplier(req, Number(req.params.id) || 0)));
 
 // satu pasangan supplier–bahan (tambah / ubah harga)
-r.put('/master/prices', only('central'), async (req, res) => {
+r.put('/master/prices', only(...ADMIN_ROLES), async (req, res) => {
   const rid = restoId(req);
   const s = await one(`SELECT id, name FROM suppliers WHERE id = $1 AND resto_id = $2 AND deleted_at IS NULL`, [Number(req.body.supplier_id) || 0, rid]);
   if (!s) throw bad('Pilih supplier');
@@ -247,8 +264,8 @@ async function saveExpenseItem(req: Request, id: number | null) {
     return row;
   });
 }
-r.post('/master/expense-items', only('central'), async (req, res) => res.status(201).json(await saveExpenseItem(req, null)));
-r.put('/master/expense-items/:id', only('central'), async (req, res) => res.json(await saveExpenseItem(req, Number(req.params.id) || 0)));
+r.post('/master/expense-items', only(...ADMIN_ROLES), async (req, res) => res.status(201).json(await saveExpenseItem(req, null)));
+r.put('/master/expense-items/:id', only(...ADMIN_ROLES), async (req, res) => res.json(await saveExpenseItem(req, Number(req.params.id) || 0)));
 
 async function saveAccount(req: Request, id: number | null) {
   const rid = restoId(req);
@@ -264,12 +281,34 @@ async function saveAccount(req: Request, id: number | null) {
     return row;
   });
 }
-r.post('/master/accounts', only('central'), async (req, res) => res.status(201).json(await saveAccount(req, null)));
-r.put('/master/accounts/:id', only('central'), async (req, res) => res.json(await saveAccount(req, Number(req.params.id) || 0)));
+r.post('/master/accounts', only(...ADMIN_ROLES), async (req, res) => res.status(201).json(await saveAccount(req, null)));
+r.put('/master/accounts/:id', only(...ADMIN_ROLES), async (req, res) => res.json(await saveAccount(req, Number(req.params.id) || 0)));
+
+// Metode pendapatan shift (Tunai, QRIS, …) & kas / rekening tempat uangnya masuk
+async function saveRevenueMethod(req: Request, id: number | null) {
+  const rid = restoId(req);
+  const name = text(req.body.name);
+  if (!name) throw bad('Isi nama metode');
+  const sort = Number(req.body.sort) || 0;
+  return tx(async (c) => {
+    await assertUniqueName(c, 'revenue_methods', rid, name, id, 'Metode');
+    const accId = req.body.pay_account_id ? Number(req.body.pay_account_id) : null;
+    const acc = accId ? await one(`SELECT name FROM pay_accounts WHERE id = $1 AND resto_id = $2 AND deleted_at IS NULL`, [accId, rid], c) : null;
+    if (accId && !acc) throw bad('Pilih kas / rekening yang valid');
+    const row = id
+      ? await one(`UPDATE revenue_methods SET name = $3, pay_account_id = $4, sort = $5 WHERE id = $1 AND resto_id = $2 AND deleted_at IS NULL RETURNING *`, [id, rid, name, accId, sort], c)
+      : await one(`INSERT INTO revenue_methods (resto_id, name, pay_account_id, sort) VALUES ($1,$2,$3,$4) RETURNING *`, [rid, name, accId, sort], c);
+    if (!row) throw notFound('Metode');
+    await log(req, { action: id ? 'update' : 'create', entity: 'master', entityId: row.id, detail: `${id ? 'Mengubah' : 'Menambah'} metode pendapatan ${name}${acc ? ` → ${acc.name}` : ''}` }, c);
+    return row;
+  });
+}
+r.post('/master/revenue-methods', only(...ADMIN_ROLES), async (req, res) => res.status(201).json(await saveRevenueMethod(req, null)));
+r.put('/master/revenue-methods/:id', only(...ADMIN_ROLES), async (req, res) => res.json(await saveRevenueMethod(req, Number(req.params.id) || 0)));
 
 // ---------- Template Excel ----------
 // ?filled=1: template berisi data saat ini (untuk diubah lalu diimpor kembali)
-r.get('/master/template', only('central'), async (req, res) => {
+r.get('/master/template', only(...ADMIN_ROLES), async (req, res) => {
   const rid = restoId(req);
   const filled = req.query.filled === '1';
   const resto = await one(`SELECT name, code FROM restos WHERE id = $1`, [rid]);
@@ -481,7 +520,7 @@ async function runImport(c: PoolClient, rid: number, wb: ExcelJS.Workbook, write
 }
 
 // dry=true: pratinjau saja. Disimpan hanya bila tidak ada kesalahan (semua atau tidak sama sekali).
-r.post('/master/import', only('central'), async (req, res) => {
+r.post('/master/import', only(...ADMIN_ROLES), async (req, res) => {
   const rid = restoId(req);
   const wb = await loadWorkbook(req.body.file);
   const dry = !!req.body.dry;

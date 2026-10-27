@@ -12,6 +12,9 @@ import Journal from './pages/Journal';
 import Logs from './pages/Logs';
 import Account from './pages/Account';
 import Restos from './pages/admin/Restos';
+import OtherExpenses from './pages/OtherExpenses';
+import Revenue from './pages/Revenue';
+import Owner from './pages/Owner';
 import { Loading } from './ui/kit';
 
 export default function App() {
@@ -49,10 +52,17 @@ export default function App() {
               <Route path="/po" element={<PurchaseOrders />} />
               <Route path="/belanja-harian" element={<Expenses kind="daily" />} />
               <Route path="/belanja-karyawan" element={<Expenses kind="employee" />} />
-              {role === 'central' && (
+              {role === 'owner' && <Route path="/owner" element={<Owner />} />}
+              {role !== 'purchasing' && (
+                <>
+                  <Route path="/pengeluaran-lain" element={<OtherExpenses />} />
+                  <Route path="/pendapatan" element={<Revenue />} />
+                  <Route path="/jurnal" element={<Journal />} />
+                </>
+              )}
+              {(role === 'central' || role === 'owner') && (
                 <>
                   <Route path="/master" element={<Master />} />
-                  <Route path="/jurnal" element={<Journal />} />
                   <Route path="/log" element={<Logs />} />
                 </>
               )}

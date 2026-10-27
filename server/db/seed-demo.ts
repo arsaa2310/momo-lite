@@ -1,17 +1,31 @@
 import bcrypt from 'bcryptjs';
 import { pool, one, q } from '../src/lib/db.ts';
 
-// Data demo: resto "Resto Demo" (DMO) dengan Central Admin, Purchasing, dan sedikit master data.
-// Akun: central@lite.id / po@lite.id, kata sandi lite1234. Tidak melakukan apa-apa bila resto DMO sudah ada.
-if (await one(`SELECT 1 AS ok FROM restos WHERE upper(code) = 'DMO'`)) {
-  console.log('Resto demo sudah ada.');
+// Data demo: resto "Resto Demo" (DMO) dengan Owner, Central Admin, Manager, Purchasing, dan sedikit master data.
+// Akun: owner@lite.id / central@lite.id / manager@lite.id / po@lite.id, kata sandi lite1234.
+// Bila resto DMO sudah ada, hanya menambahkan akun Owner & Manager demo yang belum ada.
+const hash = await bcrypt.hash('lite1234', 10);
+async function demoOwnerManager(restoId: number) {
+  if (!(await one(`SELECT 1 AS ok FROM users WHERE lower(email) = 'manager@lite.id'`)))
+    await q(`INSERT INTO users (resto_id, role, name, email, password_hash) VALUES ($1,'manager','Maya Manager','manager@lite.id',$2)`, [restoId, hash]);
+  const owner = (await one(`SELECT id FROM users WHERE lower(email) = 'owner@lite.id'`))
+    ?? (await one(`INSERT INTO users (role, name, email, password_hash) VALUES ('owner','Oki Owner','owner@lite.id',$1) RETURNING id`, [hash]));
+  await q(`INSERT INTO owner_restos (user_id, resto_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [owner.id, restoId]);
+}
+const existing = await one(`SELECT id FROM restos WHERE upper(code) = 'DMO'`);
+if (existing) {
+  await demoOwnerManager(existing.id);
+  console.log('Resto demo sudah ada — akun owner@lite.id & manager@lite.id dipastikan ada (kata sandi lite1234).');
   await pool.end();
   process.exit(0);
 }
 const resto = await one(`INSERT INTO restos (name, code, address, phone) VALUES ('Resto Demo', 'DMO', 'Jl. Contoh No. 1, Jakarta', '021-555-0101') RETURNING id`);
-const hash = await bcrypt.hash('lite1234', 10);
 await q(`INSERT INTO users (resto_id, role, name, email, password_hash) VALUES ($1,'central','Citra Central','central@lite.id',$2), ($1,'purchasing','Pandu Purchasing','po@lite.id',$2)`, [resto.id, hash]);
-for (const a of ['Kas tunai', 'Kas non-tunai', 'BCA 1234567890']) await q(`INSERT INTO pay_accounts (resto_id, name) VALUES ($1,$2)`, [resto.id, a]);
+await demoOwnerManager(resto.id);
+const acc: Record<string, number> = {};
+for (const a of ['Kas tunai', 'Kas non-tunai', 'BCA 1234567890']) acc[a] = (await one(`INSERT INTO pay_accounts (resto_id, name) VALUES ($1,$2) RETURNING id`, [resto.id, a])).id;
+for (const [i, [m, a]] of ([['Tunai', 'Kas tunai'], ['QRIS', 'BCA 1234567890'], ['Debit / Kartu', 'BCA 1234567890'], ['Transfer', 'BCA 1234567890'], ['Ojol / Online', 'Kas non-tunai']] as const).entries())
+  await q(`INSERT INTO revenue_methods (resto_id, name, pay_account_id, sort) VALUES ($1,$2,$3,$4)`, [resto.id, m, acc[a], i + 1]);
 
 const items: [string, string, string, string][] = [
   ['Daging Sapi Has Dalam', 'kg', '2.1 Biaya Bahan Baku Produksi', 'Daging'],
@@ -39,5 +53,5 @@ const exp: [string, string, string, number][] = [
 for (const [kind, name, unit, price] of exp)
   await q(`INSERT INTO expense_items (resto_id, kind, name, unit, default_price, category, sub_category) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [resto.id, kind, name, unit, price, kind === 'daily' ? '2.1 Biaya Bahan Baku Produksi' : '3.6 Biaya Natura', kind === 'daily' ? 'Bahan Harian' : 'Masak Karyawan']);
-console.log('Resto demo dibuat: central@lite.id / po@lite.id (kata sandi lite1234)');
+console.log('Resto demo dibuat: owner@lite.id / central@lite.id / manager@lite.id / po@lite.id (kata sandi lite1234)');
 await pool.end();

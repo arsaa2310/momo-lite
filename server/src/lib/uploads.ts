@@ -10,7 +10,7 @@ const SIGNATURES: [string, (b: Buffer) => boolean][] = [
   ['image/webp', (b) => b.subarray(0, 4).toString('ascii') === 'RIFF' && b.subarray(8, 12).toString('ascii') === 'WEBP'],
 ];
 
-export type UploadKind = 'receiving' | 'expense' | 'payment';
+export type UploadKind = 'receiving' | 'expense' | 'payment' | 'revenue';
 
 export function decodeImage(dataUrl: unknown) {
   const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl ?? ''));

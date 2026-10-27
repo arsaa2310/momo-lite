@@ -6,15 +6,17 @@ import { only, restoId } from '../lib/auth.ts';
 import { log } from '../lib/audit.ts';
 import { FMT, sendWorkbook } from '../lib/excel.ts';
 
-// Jurnal umum (buku pembelian) mengikuti format momo: Tanggal, Term, Kode, Supplier, Barang, Sub Kategori, Kategori, Qty, Unit,
+// Jurnal umum (buku pembelian & pendapatan) mengikuti format momo: Tanggal, Term, Kode, Supplier, Barang, Sub Kategori, Kategori, Qty, Unit,
 // Harga, PPN, Sub Total, Diskon, TOTAL (per hari + term), Tanggal Bayar, Rekening, CR/DB.
-// Term: PTH = tunai harian (PO T & belanja harian/karyawan), PKH = kredit / hutang (PO K).
+// Term: PNDPTN = pendapatan shift (uang masuk, DB), PTH = tunai harian (PO T, belanja harian/karyawan, pengeluaran lain),
+// PKH = kredit / hutang (PO K). Dilihat Central Admin, Owner, Manager.
 const r = Router();
 
+type Term = 'PNDPTN' | 'PTH' | 'PKH';
 type Row = {
-  date: string; term: 'PTH' | 'PKH'; code: string; supplier: string; item: string; sub_category: string | null; category: string | null;
+  date: string; term: Term; code: string; supplier: string; item: string; sub_category: string | null; category: string | null;
   qty: number; unit: string | null; price: number; ppn: number | null; subtotal: number; discount: number | null; total?: number | null;
-  paid_date: string | null; rekening: string | null; crdb: string; ref: string; source: 'po' | 'daily' | 'employee';
+  paid_date: string | null; rekening: string | null; crdb: string; ref: string; source: 'po' | 'daily' | 'employee' | 'other' | 'revenue';
 };
 
 function period(req: Request) {
@@ -26,7 +28,7 @@ function period(req: Request) {
 }
 
 export async function journalRows(rid: number, from: string, to: string): Promise<Row[]> {
-  const resto = await one(`SELECT upper(code) AS code FROM restos WHERE id = $1`, [rid]);
+  const resto = await one(`SELECT name, upper(code) AS code FROM restos WHERE id = $1`, [rid]);
   const rows: Row[] = [];
   const D = (col: string) => `to_char(${col} AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD')`;
 
@@ -70,7 +72,34 @@ export async function journalRows(rid: number, from: string, to: string): Promis
       paid_date: x.date, rekening: x.account, crdb: 'CR', ref: x.number, source: x.kind,
     });
 
-  const rank = { PTH: 0, PKH: 1 };
+  // Pengeluaran lain (disetujui)
+  for (const x of await q(
+    `SELECT x.number, x.payee, x.expense_date::text AS date, pa.name AS account, l.description, l.category, l.sub_category, l.qty, l.unit, l.amount
+       FROM other_expenses x JOIN other_expense_lines l ON l.expense_id = x.id LEFT JOIN pay_accounts pa ON pa.id = x.pay_account_id
+      WHERE x.resto_id = $1 AND x.status = 'approved' AND x.expense_date BETWEEN $2 AND $3 ORDER BY x.expense_date, x.id, l.id`,
+    [rid, from, to],
+  ))
+    rows.push({
+      date: x.date, term: 'PTH', code: resto.code, supplier: x.payee, item: x.description, sub_category: x.sub_category, category: x.category,
+      qty: Number(x.qty), unit: x.unit, price: Number(x.amount) / Number(x.qty), ppn: null, subtotal: Number(x.amount), discount: null,
+      paid_date: x.date, rekening: x.account, crdb: 'CR', ref: x.number, source: 'other',
+    });
+
+  // Pendapatan shift (input Manager), satu baris per metode bayar
+  for (const x of await q(
+    `SELECT x.number, x.report_date::text AS date, x.shift, l.method_name, l.amount, pa.name AS account
+       FROM revenue_reports x JOIN revenue_report_lines l ON l.report_id = x.id LEFT JOIN revenue_methods m ON m.id = l.method_id
+       LEFT JOIN pay_accounts pa ON pa.id = COALESCE(l.pay_account_id, m.pay_account_id)
+      WHERE x.resto_id = $1 AND x.status <> 'void' AND x.report_date BETWEEN $2 AND $3 ORDER BY x.report_date, x.shift, l.id`,
+    [rid, from, to],
+  ))
+    rows.push({
+      date: x.date, term: 'PNDPTN', code: resto.code, supplier: resto.name, item: `PENDAPATAN ${x.method_name.toUpperCase()}`, sub_category: x.shift,
+      category: 'Pendapatan', qty: 1, unit: 'NOTA', price: Number(x.amount), ppn: null, subtotal: Number(x.amount), discount: null,
+      paid_date: x.date, rekening: x.account, crdb: 'DB', ref: x.number, source: 'revenue',
+    });
+
+  const rank = { PNDPTN: 0, PTH: 1, PKH: 2 };
   rows.sort((a, b) => a.date.localeCompare(b.date) || rank[a.term] - rank[b.term] || a.supplier.localeCompare(b.supplier) || a.ref.localeCompare(b.ref));
   // TOTAL di baris terakhir tiap kelompok hari + term
   for (let i = 0; i < rows.length; i++) {
@@ -85,19 +114,25 @@ export async function journalRows(rid: number, from: string, to: string): Promis
 }
 const rowTotal = (x: Row) => x.subtotal - (x.discount ?? 0) + (x.ppn ?? 0);
 
-function totals(rows: Row[]) {
+// masuk = pendapatan; keluar = semua pembelian & pengeluaran (PTH + PKH); dibayar = uang yang benar-benar keluar (PKH lunas ikut)
+export function totals(rows: Row[]) {
   const by = (f: (x: Row) => boolean) => Math.round(rows.filter(f).reduce((s, x) => s + rowTotal(x), 0));
-  return {
-    pth: by((x) => x.term === 'PTH'), pkh: by((x) => x.term === 'PKH'), all: by(() => true),
-    po: by((x) => x.source === 'po'), daily: by((x) => x.source === 'daily'), employee: by((x) => x.source === 'employee'),
-    unpaid: by((x) => x.term === 'PKH' && !x.paid_date),
+  const out = (x: Row) => x.term !== 'PNDPTN';
+  const t = {
+    masuk: by((x) => x.term === 'PNDPTN'),
+    pth: by((x) => x.term === 'PTH'), pkh: by((x) => x.term === 'PKH'), keluar: by(out), all: by(out),
+    dibayar: by((x) => out(x) && !!x.paid_date), unpaid: by((x) => x.term === 'PKH' && !x.paid_date),
+    po: by((x) => x.source === 'po'), daily: by((x) => x.source === 'daily'), employee: by((x) => x.source === 'employee'), other: by((x) => x.source === 'other'),
   };
+  // selisih kas: uang masuk − uang yang sudah keluar; laba kotor kasar: pendapatan − semua pengeluaran
+  return { ...t, selisih: t.masuk - t.dibayar, net: t.masuk - t.keluar };
 }
 
 // rekap per kategori × term
 function recap(rows: Row[]) {
   const m = new Map<string, { category: string; pth: number; pkh: number; total: number }>();
   for (const x of rows) {
+    if (x.term === 'PNDPTN') continue;
     const k = x.category ?? '—';
     const v = m.get(k) ?? { category: k, pth: 0, pkh: 0, total: 0 };
     const t = rowTotal(x);
@@ -108,10 +143,17 @@ function recap(rows: Row[]) {
   return [...m.values()].map((v) => ({ ...v, pth: Math.round(v.pth), pkh: Math.round(v.pkh), total: Math.round(v.total) })).sort((a, b) => a.category.localeCompare(b.category));
 }
 
-r.get('/journal', only('central'), async (req, res) => {
+// pendapatan per metode bayar
+function revenueRecap(rows: Row[]) {
+  const m = new Map<string, number>();
+  for (const x of rows) if (x.term === 'PNDPTN') m.set(x.item, (m.get(x.item) ?? 0) + x.subtotal);
+  return [...m].map(([item, total]) => ({ item, total: Math.round(total) })).sort((a, b) => b.total - a.total);
+}
+
+r.get('/journal', only('central', 'owner', 'manager'), async (req, res) => {
   const { from, to } = period(req);
   const rows = await journalRows(restoId(req), from, to);
-  res.json({ from, to, rows, totals: totals(rows), recap: recap(rows) });
+  res.json({ from, to, rows, totals: totals(rows), recap: recap(rows), revenue: revenueRecap(rows) });
 });
 
 const COLS: { header: string; key: string; width: number; type?: keyof typeof FMT }[] = [
@@ -136,7 +178,7 @@ const COLS: { header: string; key: string; width: number; type?: keyof typeof FM
 ];
 const asDate = (s: string | null) => (s ? new Date(`${s}T00:00:00Z`) : null);
 
-r.get('/journal/export', only('central'), async (req, res) => {
+r.get('/journal/export', only('central', 'owner', 'manager'), async (req, res) => {
   const rid = restoId(req);
   const { from, to } = period(req);
   const rows = await journalRows(rid, from, to);
@@ -146,7 +188,7 @@ r.get('/journal/export', only('central'), async (req, res) => {
   const ws = wb.addWorksheet('Jurnal Umum');
   ws.getCell(1, 1).value = `JURNAL UMUM — ${resto.name} (${resto.code})`;
   ws.getCell(1, 1).font = { bold: true, size: 14 };
-  ws.getCell(2, 1).value = `Periode ${from} s/d ${to} · PTH = tunai harian, PKH = kredit / hutang`;
+  ws.getCell(2, 1).value = `Periode ${from} s/d ${to} · PNDPTN = pendapatan, PTH = tunai harian, PKH = kredit / hutang`;
   ws.getCell(2, 1).font = { color: { argb: 'FF666666' } };
   const head = 4;
   COLS.forEach((c, i) => {
@@ -168,7 +210,8 @@ r.get('/journal/export', only('central'), async (req, res) => {
   });
   const t = totals(rows);
   const end = head + rows.length + 2;
-  [['Total PTH (tunai)', t.pth], ['Total PKH (kredit / hutang)', t.pkh], ['  └ PKH belum dibayar', t.unpaid], ['TOTAL PEMBELIAN', t.all]].forEach(([label, v], i) => {
+  [['Total PNDPTN (uang masuk)', t.masuk], ['Total PTH (tunai)', t.pth], ['Total PKH (kredit / hutang)', t.pkh], ['  └ PKH belum dibayar', t.unpaid],
+   ['TOTAL PENGELUARAN', t.keluar], ['Uang keluar (sudah dibayar)', t.dibayar], ['SELISIH (masuk − keluar dibayar)', t.selisih]].forEach(([label, v], i) => {
     ws.getCell(end + i, 12).value = label as string;
     ws.getCell(end + i, 12).font = { bold: true };
     ws.getCell(end + i, 14).value = v as number;
@@ -199,6 +242,18 @@ r.get('/journal/export', only('central'), async (req, res) => {
   rs.getCell(tr, 1).value = 'TOTAL';
   [t.pth, t.pkh, t.all].forEach((v, i) => { rs.getCell(tr, i + 2).value = v; rs.getCell(tr, i + 2).numFmt = FMT.money; });
   rs.getRow(tr).font = { bold: true };
+  // pendapatan per metode bayar
+  const rv = revenueRecap(rows);
+  if (rv.length) {
+    const r0 = tr + 3;
+    rs.getCell(r0, 1).value = 'Pendapatan per metode';
+    rs.getCell(r0, 1).font = { bold: true };
+    rv.forEach((x, i) => { rs.getCell(r0 + 1 + i, 1).value = x.item; rs.getCell(r0 + 1 + i, 4).value = x.total; rs.getCell(r0 + 1 + i, 4).numFmt = FMT.money; });
+    rs.getCell(r0 + 1 + rv.length, 1).value = 'TOTAL PENDAPATAN';
+    rs.getCell(r0 + 1 + rv.length, 4).value = t.masuk;
+    rs.getCell(r0 + 1 + rv.length, 4).numFmt = FMT.money;
+    rs.getRow(r0 + 1 + rv.length).font = { bold: true };
+  }
 
   await log(req, { action: 'export', entity: 'journal', detail: `Mengekspor jurnal umum ${from} s/d ${to} (${rows.length} baris)` });
   await sendWorkbook(res, wb, `jurnal-umum-${resto.code}-${from}_${to}.xlsx`);

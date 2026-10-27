@@ -9,10 +9,10 @@ import { date, qty as fq, rp, todayStr } from '../format';
 const firstOfMonth = () => `${todayStr().slice(0, 7)}-01`;
 const n0 = (v: any) => (v == null || v === '' ? '' : rp(v));
 
-// Jurnal umum (buku pembelian): PO (PTH / PKH) + belanja harian & karyawan (PTH), format kolom sama dengan momo.
+// Jurnal umum: pendapatan shift (PNDPTN) + PO (PTH / PKH) + belanja harian & karyawan + pengeluaran lain (PTH), format kolom sama dengan momo.
 export default function Journal() {
   const [p, setP] = useState({ from: firstOfMonth(), to: todayStr() });
-  const [term, setTerm] = useState<'' | 'PTH' | 'PKH'>('');
+  const [term, setTerm] = useState<'' | 'PNDPTN' | 'PTH' | 'PKH'>('');
   const { data, isLoading } = useApi<any>(`/journal${qs(p)}`, { keepPrevious: true });
   const [busy, setBusy] = useState(false);
   const toast = useToast();
@@ -24,7 +24,7 @@ export default function Journal() {
   const t = data?.totals;
   return (
     <>
-      <PageHead title="Jurnal Umum" sub="Buku pembelian: kedatangan PO (PTH tunai / PKH kredit) dan belanja harian & karyawan (PTH).">
+      <PageHead title="Jurnal Umum" sub="Uang masuk (PNDPTN: pendapatan shift) dan uang keluar: kedatangan PO (PTH tunai / PKH kredit), belanja harian & karyawan, pengeluaran lain.">
         <button className="btn primary" disabled={busy} onClick={exportXlsx}><FileSpreadsheet size={15} /> {busy ? 'Menyiapkan…' : 'Ekspor Excel'}</button>
       </PageHead>
       <div className="toolbar">
@@ -33,15 +33,22 @@ export default function Journal() {
           <span className="muted">s/d</span>
           <Input type="date" value={p.to} onChange={(e) => setP({ ...p, to: e.target.value })} />
         </div>
-        <Seg value={term} onChange={setTerm} options={[{ value: '', label: 'Semua' }, { value: 'PTH', label: 'PTH' }, { value: 'PKH', label: 'PKH' }]} />
+        <Seg value={term} onChange={setTerm} options={[{ value: '', label: 'Semua' }, { value: 'PNDPTN', label: 'PNDPTN' }, { value: 'PTH', label: 'PTH' }, { value: 'PKH', label: 'PKH' }]} />
       </div>
       {t && (
-        <div className="stats" style={{ marginBottom: 14 }}>
-          <div className="stat"><label>Total pembelian</label><div className="v">{rp(t.all)}</div><div className="d">{date(data.from)} – {date(data.to)}</div></div>
-          <div className="stat"><label>PTH (tunai)</label><div className="v">{rp(t.pth)}</div></div>
-          <div className="stat"><label>PKH (kredit / hutang)</label><div className="v">{rp(t.pkh)}</div><div className="d">{t.unpaid ? <span className="down">{rp(t.unpaid)} belum dibayar</span> : 'semua lunas'}</div></div>
-          <div className="stat"><label>PO · Harian · Karyawan</label><div className="v" style={{ fontSize: 15 }}>{rp(t.po)}</div><div className="d">{rp(t.daily)} · {rp(t.employee)}</div></div>
-        </div>
+        <>
+          <div className="cashflow">
+            <div className="stat"><label>Uang masuk (PNDPTN)</label><div className="v in">{rp(t.masuk)}</div><div className="d">{date(data.from)} – {date(data.to)}</div></div>
+            <div className="stat"><label>Uang keluar (sudah dibayar)</label><div className="v out">{rp(t.dibayar)}</div><div className="d">total pengeluaran {rp(t.keluar)}{t.unpaid ? <span className="down"> · hutang {rp(t.unpaid)}</span> : ''}</div></div>
+            <div className="stat"><label>Selisih kas</label><div className="v">{rp(t.selisih)}</div><div className="d">masuk − keluar dibayar</div></div>
+          </div>
+          <div className="stats" style={{ marginBottom: 14 }}>
+            <div className="stat"><label>PTH (tunai)</label><div className="v">{rp(t.pth)}</div></div>
+            <div className="stat"><label>PKH (kredit / hutang)</label><div className="v">{rp(t.pkh)}</div><div className="d">{t.unpaid ? <span className="down">{rp(t.unpaid)} belum dibayar</span> : 'semua lunas'}</div></div>
+            <div className="stat"><label>PO · Harian · Karyawan</label><div className="v" style={{ fontSize: 15 }}>{rp(t.po)}</div><div className="d">{rp(t.daily)} · {rp(t.employee)}</div></div>
+            <div className="stat"><label>Pengeluaran lain</label><div className="v">{rp(t.other)}</div></div>
+          </div>
+        </>
       )}
       {isLoading ? <Loading /> : !rows.length ? <div className="panel"><Empty title="Tidak ada transaksi di periode ini" /></div> : (
         <div className="panel">
@@ -59,18 +66,34 @@ export default function Journal() {
                     <td>{r.sub_category ?? ''}</td><td>{r.category ?? ''}</td><td className="num">{fq(r.qty)}</td><td>{r.unit ?? ''}</td>
                     <td className="num">{rp(r.price)}</td><td className="num">{n0(r.ppn)}</td><td className="num">{rp(r.subtotal)}</td><td className="num">{n0(r.discount)}</td>
                     <td className="num"><b>{!term && r.total != null ? rp(r.total) : ''}</b></td>
-                    <td>{r.paid_date ? date(r.paid_date) : <span className="down">belum</span>}</td><td>{r.rekening ?? ''}</td><td>{r.crdb}</td><td className="mono">{r.ref}</td>
+                    <td>{r.paid_date ? date(r.paid_date) : <span className="down">belum</span>}</td><td>{r.rekening ?? ''}</td><td className={r.crdb === 'DB' ? 'up' : ''}>{r.crdb}</td><td className="mono">{r.ref}</td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot><tr><td colSpan={13}>Total {term || 'pembelian'}</td><td className="num">{rp(rows.reduce((s: number, r: any) => s + r.subtotal - (r.discount ?? 0) + (r.ppn ?? 0), 0))}</td><td colSpan={4} /></tr></tfoot>
+              <tfoot>
+                {term ? <tr><td colSpan={13}>Total {term}</td><td className="num">{rp(rows.reduce((s: number, r: any) => s + r.subtotal - (r.discount ?? 0) + (r.ppn ?? 0), 0))}</td><td colSpan={4} /></tr> : <>
+                  <tr><td colSpan={13}>Total uang masuk (PNDPTN)</td><td className="num">{rp(t.masuk)}</td><td colSpan={4} /></tr>
+                  <tr><td colSpan={13}>Total pengeluaran (PTH + PKH)</td><td className="num">{rp(t.keluar)}</td><td colSpan={4} /></tr>
+                </>}
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+      {data?.revenue?.length > 0 && (
+        <div className="panel" style={{ marginTop: 14, maxWidth: 720 }}>
+          <div className="panel-head"><h3>Pendapatan per metode</h3></div>
+          <div className="table-wrap">
+            <table className="t compact">
+              <tbody>{data.revenue.map((x: any) => <tr key={x.item}><td>{x.item}</td><td className="num">{rp(x.total)}</td></tr>)}</tbody>
+              <tfoot><tr><td>Total</td><td className="num">{rp(t.masuk)}</td></tr></tfoot>
             </table>
           </div>
         </div>
       )}
       {data?.recap?.length > 0 && (
         <div className="panel" style={{ marginTop: 14, maxWidth: 720 }}>
-          <div className="panel-head"><h3>Rekap per kategori</h3></div>
+          <div className="panel-head"><h3>Rekap pengeluaran per kategori</h3></div>
           <div className="table-wrap">
             <table className="t compact">
               <thead><tr><th>Kategori</th><th className="num">PTH</th><th className="num">PKH</th><th className="num">Total</th></tr></thead>

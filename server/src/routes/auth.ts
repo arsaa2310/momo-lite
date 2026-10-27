@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { one, q } from '../lib/db.ts';
 import { HttpError, bad } from '../lib/http.ts';
-import { COOKIE, ROLE_LABEL, requireAuth, setSessionCookie, signSession } from '../lib/auth.ts';
+import { COOKIE, RESTO_COOKIE, ROLE_LABEL, requireAuth, setSessionCookie, signSession } from '../lib/auth.ts';
 import { log } from '../lib/audit.ts';
 
 const r = Router();
@@ -20,19 +20,30 @@ r.post('/login', async (req, res) => {
   if (u.resto_id && !u.resto_active) throw new HttpError(403, `Resto ${u.resto_name} sedang dinonaktifkan. Hubungi admin.`);
   await q(`UPDATE users SET last_login_at = now() WHERE id = $1`, [u.id]);
   setSessionCookie(res, signSession(u.id, u.token_version));
-  req.s = { userId: u.id, name: u.name, email: u.email, role: u.role, restoId: u.resto_id };
+  req.s = { userId: u.id, name: u.name, email: u.email, role: u.role, restoId: u.resto_id, restoIds: u.resto_id ? [u.resto_id] : [] };
   await log(req, { action: 'login', entity: 'user', entityId: u.id, detail: `${u.name} masuk` });
   res.json({ ok: true });
 });
 
 r.post('/logout', (_req, res) => {
   res.clearCookie(COOKIE, { path: '/' });
+  res.clearCookie(RESTO_COOKIE, { path: '/' });
   res.json({ ok: true });
 });
 
 r.get('/me', requireAuth, async (req, res) => {
-  const resto = req.s.restoId ? await one(`SELECT id, name, code, address, phone FROM restos WHERE id = $1`, [req.s.restoId]) : null;
-  res.json({ user: { id: req.s.userId, name: req.s.name, email: req.s.email, role: req.s.role, role_label: ROLE_LABEL[req.s.role] }, resto });
+  const resto = req.s.restoId ? await one(`SELECT id, name, code, address, phone, shift_names FROM restos WHERE id = $1`, [req.s.restoId]) : null;
+  // Owner: daftar resto yang bisa dipilih
+  const restos = req.s.role === 'owner' ? await q(`SELECT id, name, code FROM restos WHERE id = ANY($1) ORDER BY name`, [req.s.restoIds]) : [];
+  res.json({ user: { id: req.s.userId, name: req.s.name, email: req.s.email, role: req.s.role, role_label: ROLE_LABEL[req.s.role] }, resto, restos });
+});
+
+// Owner berpindah resto yang sedang dibuka
+r.post('/resto', requireAuth, async (req, res) => {
+  const id = Number(req.body.resto_id) || 0;
+  if (req.s.role !== 'owner' || !req.s.restoIds.includes(id)) throw new HttpError(403, 'Resto ini bukan milik akun Anda');
+  res.cookie(RESTO_COOKIE, String(id), { httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === 'true', maxAge: 365 * 24 * 3600e3, path: '/' });
+  res.json({ ok: true });
 });
 
 r.put('/password', requireAuth, async (req, res) => {

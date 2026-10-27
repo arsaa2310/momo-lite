@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { BookOpen, Building2, Database, History, Home, LogOut, Menu, ShoppingBasket, Truck, UserCog, Utensils } from 'lucide-react';
-import { useLogout, useSession, type Role } from './session';
+import { BookOpen, Building2, Database, History, Home, LayoutDashboard, LogOut, Menu, Receipt, ShoppingBasket, Truck, UserCog, Utensils, Wallet } from 'lucide-react';
+import { useLogout, useSession, useSwitchResto, type Role } from './session';
 import { initials } from './format';
 
 export function Logo({ size = 22 }: { size?: number }) {
@@ -13,21 +13,26 @@ export function Logo({ size = 22 }: { size?: number }) {
   );
 }
 
+const RESTO: Role[] = ['owner', 'central', 'manager', 'purchasing'];
 const NAV: { path: string; label: string; icon: typeof Home; roles: Role[] }[] = [
   { path: '/', label: 'Resto & Akun', icon: Building2, roles: ['superadmin'] },
-  { path: '/', label: 'Beranda', icon: Home, roles: ['central', 'purchasing'] },
-  { path: '/po', label: 'Purchase Order', icon: Truck, roles: ['central', 'purchasing'] },
-  { path: '/belanja-harian', label: 'Belanja Harian', icon: ShoppingBasket, roles: ['central', 'purchasing'] },
-  { path: '/belanja-karyawan', label: 'Belanja Karyawan', icon: Utensils, roles: ['central', 'purchasing'] },
-  { path: '/master', label: 'Master Data', icon: Database, roles: ['central'] },
-  { path: '/jurnal', label: 'Jurnal Umum', icon: BookOpen, roles: ['central'] },
-  { path: '/log', label: 'Log Aktivitas', icon: History, roles: ['superadmin', 'central'] },
-  { path: '/akun', label: 'Akun Saya', icon: UserCog, roles: ['superadmin', 'central', 'purchasing'] },
+  { path: '/owner', label: 'Semua Resto', icon: LayoutDashboard, roles: ['owner'] },
+  { path: '/', label: 'Beranda', icon: Home, roles: RESTO },
+  { path: '/po', label: 'Purchase Order', icon: Truck, roles: RESTO },
+  { path: '/belanja-harian', label: 'Belanja Harian', icon: ShoppingBasket, roles: RESTO },
+  { path: '/belanja-karyawan', label: 'Belanja Karyawan', icon: Utensils, roles: RESTO },
+  { path: '/pengeluaran-lain', label: 'Pengeluaran Lain', icon: Receipt, roles: ['owner', 'central', 'manager'] },
+  { path: '/pendapatan', label: 'Pendapatan Shift', icon: Wallet, roles: ['owner', 'central', 'manager'] },
+  { path: '/jurnal', label: 'Jurnal Umum', icon: BookOpen, roles: ['owner', 'central', 'manager'] },
+  { path: '/master', label: 'Master Data', icon: Database, roles: ['owner', 'central'] },
+  { path: '/log', label: 'Log Aktivitas', icon: History, roles: ['superadmin', 'owner', 'central'] },
+  { path: '/akun', label: 'Akun Saya', icon: UserCog, roles: ['superadmin', ...RESTO] },
 ];
 
 export default function Shell() {
-  const { user, resto, role } = useSession();
+  const { user, resto, restos, role } = useSession();
   const logout = useLogout();
+  const switchResto = useSwitchResto();
   const loc = useLocation();
   const [mobileNav, setMobileNav] = useState(false);
   useEffect(() => setMobileNav(false), [loc.pathname]);
@@ -44,10 +49,19 @@ export default function Shell() {
           <b>momo lite</b>
           <span className="badge plain" style={{ marginLeft: 'auto' }}>PO</span>
         </div>
-        <div className="biz">
-          {resto ? resto.name : 'Panel Admin'}
-          <small>{resto ? `Kode ${resto.code}` : 'Kelola resto & akun'}</small>
-        </div>
+        {role === 'owner' && restos.length > 1 ? (
+          <div className="biz">
+            <select className="input biz-select" value={resto?.id ?? ''} aria-label="Pilih resto" onChange={(e) => switchResto(Number(e.target.value))}>
+              {restos.map((r) => <option key={r.id} value={r.id}>{r.name} ({r.code})</option>)}
+            </select>
+            <small>Owner · {restos.length} resto</small>
+          </div>
+        ) : (
+          <div className="biz">
+            {resto ? resto.name : role === 'owner' ? 'Belum ada resto' : 'Panel Admin'}
+            <small>{resto ? `Kode ${resto.code}` : role === 'owner' ? 'Hubungi admin untuk menautkan resto' : 'Kelola resto & akun'}</small>
+          </div>
+        )}
         <nav className="nav">
           {NAV.filter((n) => n.roles.includes(role)).map((n) => (
             <NavLink key={n.label} to={n.path} end={n.path === '/'} className={({ isActive }) => `nav-head ${isActive ? 'on nav-active' : ''}`}>

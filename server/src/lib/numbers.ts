@@ -1,8 +1,9 @@
 import type { PoolClient } from 'pg';
 import { one } from './db.ts';
 
-// Nomor dokumen berurutan per resto dengan kode resto: PO-RST-00001, BH-RST-00001 (belanja harian), BK-RST-00001 (belanja karyawan).
-export async function nextNumber(c: PoolClient, table: 'purchase_orders' | 'expenses', prefix: string, restoId: number) {
+// Nomor dokumen berurutan per resto dengan kode resto: PO-RST-00001, BH-RST-00001 (belanja harian), BK-RST-00001 (belanja karyawan),
+// PL-RST-00001 (pengeluaran lain), PD-RST-00001 (pendapatan shift).
+export async function nextNumber(c: PoolClient, table: 'purchase_orders' | 'expenses' | 'other_expenses' | 'revenue_reports', prefix: string, restoId: number) {
   const head = `${prefix}-${(await one(`SELECT upper(code) AS code FROM restos WHERE id = $1`, [restoId], c)).code}-`;
   // kunci per resto + jenis agar dua dokumen yang dibuat bersamaan tidak mendapat nomor sama
   await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [head]);
